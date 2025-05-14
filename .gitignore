@@ -1,0 +1,53 @@
+# Android Studio/IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+.gradle/
+local.properties
+build/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services
+**/google-services.json
+
+# Firebase Crashlytics
+**/crashlytics.properties
+**/crashlytics-build.properties
+
+# Proguard/R8
+proguard/
+*.map
+
+# Test Results
+**/test-results/
+
+# Log files
+*.log
+
+# Environment variables
+.env
+
+# Kotlin Multiplatform
+**/build/
+**/klib/
+
+# Specific to this project (if any, add below)
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+.cursor
+.cursorrules
+*.mdc
