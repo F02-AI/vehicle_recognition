@@ -25,6 +25,7 @@ fun WatchlistScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val showDialog by viewModel.showAddDialog.collectAsState()
+    var entryToDelete by remember { mutableStateOf<WatchlistEntry?>(null) }
 
     Scaffold(
         topBar = {
@@ -49,14 +50,14 @@ fun WatchlistScreen(
                             Text("Watchlist is empty. Tap '+' to add an entry.")
                         }
                     } else {
-                        WatchlistContent(entries = state.entries) {
-                            viewModel.deleteWatchlistEntry(it.licensePlate)
+                        WatchlistContent(entries = state.entries) { entry ->
+                            entryToDelete = entry // Show confirmation dialog
                         }
                     }
                 }
                 is WatchlistUiState.Error -> {
                      Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Error loading watchlist: ${'$'}{state.message}")
+                        Text("Error loading watchlist: ${state.message}")
                     }
                 }
             }
@@ -65,6 +66,19 @@ fun WatchlistScreen(
                     viewModel = viewModel,
                     onDismiss = { viewModel.dismissAddDialog(false) },
                     onConfirm = { viewModel.addWatchlistEntry() }
+                )
+            }
+
+            entryToDelete?.let { entry ->
+                DeleteConfirmationDialog(
+                    entry = entry,
+                    onConfirmDelete = {
+                        viewModel.deleteWatchlistEntry(entry.licensePlate)
+                        entryToDelete = null
+                    },
+                    onDismiss = {
+                        entryToDelete = null
+                    }
                 )
             }
         }
@@ -105,8 +119,8 @@ fun WatchlistItem(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = entry.licensePlate, style = MaterialTheme.typography.titleMedium)
-                Text(text = "Type: ${'$'}{entry.vehicleType.name}", style = MaterialTheme.typography.bodySmall)
-                Text(text = "Color: ${'$'}{entry.vehicleColor.name}", style = MaterialTheme.typography.bodySmall)
+                Text(text = "Type: ${entry.vehicleType.name}", style = MaterialTheme.typography.bodySmall)
+                Text(text = "Color: ${entry.vehicleColor.name}", style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onDeleteClicked) {
                 Icon(Icons.Filled.Delete, contentDescription = "Delete entry")
@@ -231,4 +245,31 @@ fun WatchlistContentPreview() {
 //     MaterialTheme {
         // AddWatchlistEntryDialog( ... )
 //     }
-// } 
+// }
+
+@Composable
+fun DeleteConfirmationDialog(
+    entry: WatchlistEntry,
+    onConfirmDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Confirm Deletion") },
+        text = { Text("Are you sure you want to delete watchlist entry for LP: ${entry.licensePlate}?") },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirmDelete()
+                }
+            ) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+} 

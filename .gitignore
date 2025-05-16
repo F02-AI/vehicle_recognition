@@ -51,3 +51,8 @@ Thumbs.db
 .cursor
 .cursorrules
 *.mdc
+
+# Java / JVM
+*.hprof
+hs_err_pid*
+replay_pid*

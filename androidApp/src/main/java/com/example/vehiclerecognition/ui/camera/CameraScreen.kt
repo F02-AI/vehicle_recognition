@@ -10,7 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
+import androidx.camera.core.Preview as CameraXPreview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.ZoomState
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -50,8 +50,8 @@ fun ActualCameraView(
     LaunchedEffect(cameraProvider, desiredZoomRatio, currentCamera) {
         cameraProvider?.unbindAll()
         cameraProvider?.let { provider ->
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
+            val preview = CameraXPreview.Builder().build().also { preview ->
+                preview.setSurfaceProvider(previewView.surfaceProvider)
             }
 
             // FR 1.3: Frame Processing Hook - ImageAnalysis setup
