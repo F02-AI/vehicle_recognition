@@ -1,9 +1,12 @@
 package com.example.vehiclerecognition.ui.watchlist
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -11,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -120,7 +124,11 @@ fun WatchlistItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = entry.licensePlate, style = MaterialTheme.typography.titleMedium)
                 Text(text = "Type: ${entry.vehicleType.name}", style = MaterialTheme.typography.bodySmall)
-                Text(text = "Color: ${entry.vehicleColor.name}", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "Color: ${entry.vehicleColor.name}", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(4.dp))
+                    ColorIcon(vehicleColor = entry.vehicleColor)
+                }
             }
             IconButton(onClick = onDeleteClicked) {
                 Icon(Icons.Filled.Delete, contentDescription = "Delete entry")
@@ -169,7 +177,14 @@ fun AddWatchlistEntryDialog(
                     label = "Vehicle Color",
                     items = VehicleColor.values().toList(),
                     selectedItem = newColor,
-                    onItemSelected = { viewModel.onNewVehicleColorChange(it) }
+                    onItemSelected = { viewModel.onNewVehicleColorChange(it) },
+                    itemContent = { colorItem ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ColorIcon(vehicleColor = colorItem)
+                            Spacer(Modifier.width(8.dp))
+                            Text(colorItem.name)
+                        }
+                    }
                 )
 
                 Row(
@@ -192,7 +207,8 @@ fun <T> ExposedDropdownMenuBox(
     items: List<T>,
     selectedItem: T,
     onItemSelected: (T) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    itemContent: @Composable (T) -> Unit = { item -> Text(item.toString()) }
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -212,7 +228,7 @@ fun <T> ExposedDropdownMenuBox(
             ) {
                 items.forEach { item ->
                     DropdownMenuItem(
-                        text = { Text(item.toString()) },
+                        text = { itemContent(item) },
                         onClick = {
                             onItemSelected(item)
                             expanded = false
@@ -271,5 +287,30 @@ fun DeleteConfirmationDialog(
                 Text("Cancel")
             }
         }
+    )
+}
+
+// Helper to get Compose Color
+fun VehicleColor.toComposeColor(): Color {
+    return when (this) {
+        VehicleColor.RED -> Color.Red
+        VehicleColor.BLUE -> Color.Blue
+        VehicleColor.GREEN -> Color.Green
+        VehicleColor.WHITE -> Color.White
+        VehicleColor.BLACK -> Color.Black
+        VehicleColor.GRAY -> Color.Gray
+        VehicleColor.YELLOW -> Color.Yellow
+        // Consider adding an 'else' branch for future-proofing if more colors are added
+        // else -> Color.Transparent // Or some default
+    }
+}
+
+@Composable
+fun ColorIcon(vehicleColor: VehicleColor, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(16.dp)
+            .background(vehicleColor.toComposeColor(), CircleShape)
+            .border(1.dp, Color.DarkGray, CircleShape)
     )
 } 
