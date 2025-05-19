@@ -31,7 +31,8 @@ object AppModule {
             appContext,
             AppDatabase::class.java,
             "vehicle_recognition_database"
-        ).build()
+        ).fallbackToDestructiveMigration()
+         .build()
     }
 
     @Provides

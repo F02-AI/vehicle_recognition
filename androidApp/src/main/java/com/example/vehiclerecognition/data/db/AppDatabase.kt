@@ -3,7 +3,7 @@ package com.example.vehiclerecognition.data.db
 import androidx.room.Database
 import androidx.room.RoomDatabase
 
-@Database(entities = [WatchlistEntryEntity::class], version = 1, exportSchema = false)
+@Database(entities = [WatchlistEntryEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun watchlistDao(): WatchlistDao
 

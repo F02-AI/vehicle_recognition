@@ -5,11 +5,13 @@ import androidx.room.PrimaryKey
 import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.model.WatchlistEntry
+import java.util.UUID
 
 @Entity(tableName = "watchlist_entries")
 data class WatchlistEntryEntity(
     @PrimaryKey
-    val licensePlate: String,
+    val id: String = UUID.randomUUID().toString(),
+    val licensePlate: String?,
     val vehicleType: String, // Stored as String, converted from/to Enum
     val vehicleColor: String // Stored as String, converted from/to Enum
 ) {

@@ -18,6 +18,8 @@ class MockWatchlistRepository(private val entries: MutableList<WatchlistEntry> =
         return entries.add(entry)
     }
     override suspend fun deleteEntry(licensePlate: String): Boolean = entries.removeIf { it.licensePlate == licensePlate }
+    override suspend fun deleteEntryByColorAndType(color: VehicleColor, type: VehicleType): Boolean = 
+        entries.removeIf { it.vehicleColor == color && it.vehicleType == type && it.licensePlate == null }
     override suspend fun getAllEntries(): List<WatchlistEntry> = entries.toList()
     override suspend fun findEntryByLicensePlate(licensePlate: String): WatchlistEntry? = entries.find { it.licensePlate == licensePlate }
 }

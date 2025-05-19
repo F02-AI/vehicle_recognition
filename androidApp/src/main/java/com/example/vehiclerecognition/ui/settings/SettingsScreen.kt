@@ -15,7 +15,7 @@ fun DetectionMode.toDisplayString(): String {
     return this.name.split('_').joinToString(" + ") { part ->
         when (part) {
             "LP" -> "LP"
-            else -> part.toLowerCase().capitalize()
+            else -> part.lowercase().replaceFirstChar { it.uppercase() }
         }
     }
 }

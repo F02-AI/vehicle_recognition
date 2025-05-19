@@ -22,6 +22,8 @@ show_help() {
     echo -e "  ${GREEN}fix-deprecations${NC}    Show recommendations for fixing Gradle deprecation warnings"
     echo -e "  ${GREEN}quiet-build${NC}         Build without showing deprecation warnings"
     echo -e "  ${GREEN}help${NC}                Show this help message"
+    echo -e "  ${GREEN}apk${NC}                 Build debug APK"
+    echo -e "  ${GREEN}apk-release${NC}         Build release APK"
     echo ""
 }
 
@@ -68,6 +70,16 @@ case "$1" in
         ;;
     help)
         show_help
+        ;;
+    apk)
+        echo -e "${BLUE}Building Debug APK...${NC}"
+        ./gradlew assembleDebug
+        echo -e "${GREEN}APK created at: androidApp/build/outputs/apk/debug/androidApp-debug.apk${NC}"
+        ;;
+    apk-release)
+        echo -e "${BLUE}Building Release APK...${NC}"
+        ./gradlew assembleRelease
+        echo -e "${GREEN}APK created at: androidApp/build/outputs/apk/release/androidApp-release.apk${NC}"
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"

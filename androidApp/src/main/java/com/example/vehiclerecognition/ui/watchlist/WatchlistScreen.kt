@@ -22,6 +22,15 @@ import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.model.WatchlistEntry
 
+// Extension functions to format enum values with proper case
+fun VehicleType.toFormattedString(): String {
+    return name.lowercase().replaceFirstChar { it.uppercase() }
+}
+
+fun VehicleColor.toFormattedString(): String {
+    return name.lowercase().replaceFirstChar { it.uppercase() }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchlistScreen(
@@ -77,7 +86,13 @@ fun WatchlistScreen(
                 DeleteConfirmationDialog(
                     entry = entry,
                     onConfirmDelete = {
-                        viewModel.deleteWatchlistEntry(entry.licensePlate)
+                        val licensePlate = entry.licensePlate
+                        if (licensePlate != null) {
+                            viewModel.deleteWatchlistEntry(licensePlate)
+                        } else {
+                            // For entries without license plate, we need to delete by the combination of color and type
+                            viewModel.deleteEntryByColorAndType(entry.vehicleColor, entry.vehicleType)
+                        }
                         entryToDelete = null
                     },
                     onDismiss = {
@@ -99,7 +114,17 @@ fun WatchlistContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(entries, key = { it.licensePlate }) { entry ->
+        items(
+            items = entries,
+            // Use a combination of fields as a unique key
+            key = { entry -> 
+                if (entry.licensePlate != null) {
+                    "lp:${entry.licensePlate}"
+                } else {
+                    "color:${entry.vehicleColor.name}:type:${entry.vehicleType.name}:${System.identityHashCode(entry)}"
+                }
+            }
+        ) { entry ->
             WatchlistItem(entry = entry, onDeleteClicked = { onDeleteClicked(entry) })
         }
     }
@@ -122,10 +147,15 @@ fun WatchlistItem(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = entry.licensePlate, style = MaterialTheme.typography.titleMedium)
-                Text(text = "Type: ${entry.vehicleType.name}", style = MaterialTheme.typography.bodySmall)
+                val licensePlate = entry.licensePlate
+                if (licensePlate != null) {
+                    Text(text = licensePlate, style = MaterialTheme.typography.titleMedium)
+                } else {
+                    Text(text = "(No license plate)", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                }
+                Text(text = "Type: ${entry.vehicleType.toFormattedString()}", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "Color: ${entry.vehicleColor.name}", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "Color: ${entry.vehicleColor.toFormattedString()}", style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.width(4.dp))
                     ColorIcon(vehicleColor = entry.vehicleColor)
                 }
@@ -158,12 +188,15 @@ fun AddWatchlistEntryDialog(
                 OutlinedTextField(
                     value = newLp,
                     onValueChange = { viewModel.onNewLicensePlateChange(it) },
-                    label = { Text("License Plate (e.g., NN-NNN-NN)") },
+                    label = { Text("License Plate (Optional for Color/Type)") },
                     isError = lpError != null,
                     singleLine = true
                 )
                 if (lpError != null) {
                     Text(lpError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("Note: License plate is required for LP-based detection modes.", 
+                         style = MaterialTheme.typography.bodySmall)
                 }
 
                 // Dropdowns for Type and Color
@@ -182,7 +215,7 @@ fun AddWatchlistEntryDialog(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             ColorIcon(vehicleColor = colorItem)
                             Spacer(Modifier.width(8.dp))
-                            Text(colorItem.name)
+                            Text(colorItem.toFormattedString())
                         }
                     }
                 )
@@ -208,14 +241,24 @@ fun <T> ExposedDropdownMenuBox(
     selectedItem: T,
     onItemSelected: (T) -> Unit,
     modifier: Modifier = Modifier,
-    itemContent: @Composable (T) -> Unit = { item -> Text(item.toString()) }
+    itemContent: @Composable (T) -> Unit = { item -> 
+        when (item) {
+            is VehicleType -> Text(item.toFormattedString())
+            is VehicleColor -> Text(item.toFormattedString())
+            else -> Text(item.toString())
+        }
+    }
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxWidth()) {
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
             OutlinedTextField(
-                value = selectedItem.toString(),
+                value = when (selectedItem) {
+                    is VehicleType -> selectedItem.toFormattedString()
+                    is VehicleColor -> selectedItem.toFormattedString()
+                    else -> selectedItem.toString()
+                },
                 onValueChange = { /* Read-only */ },
                 label = { Text(label) },
                 readOnly = true,
@@ -269,10 +312,17 @@ fun DeleteConfirmationDialog(
     onConfirmDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val licensePlate = entry.licensePlate
+    val displayText = if (licensePlate != null) {
+        "Are you sure you want to delete watchlist entry for LP: $licensePlate?"
+    } else {
+        "Are you sure you want to delete this ${entry.vehicleColor.toFormattedString()} ${entry.vehicleType.toFormattedString()} watchlist entry?"
+    }
+    
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Confirm Deletion") },
-        text = { Text("Are you sure you want to delete watchlist entry for LP: ${entry.licensePlate}?") },
+        text = { Text(displayText) },
         confirmButton = {
             Button(
                 onClick = {

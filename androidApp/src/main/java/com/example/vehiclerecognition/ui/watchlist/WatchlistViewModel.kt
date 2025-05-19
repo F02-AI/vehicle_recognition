@@ -75,7 +75,12 @@ class WatchlistViewModel @Inject constructor(
 
     fun addWatchlistEntry() {
         val lp = _newLicensePlate.value.trim()
-        if (!licensePlateValidator.isValid(lp)) {
+        
+        // For Color+Type and Color modes, license plate is optional
+        val useLicensePlate = lp.isNotEmpty()
+        
+        // If license plate is provided, validate it
+        if (useLicensePlate && !licensePlateValidator.isValid(lp)) {
             _lpValidationError.value = "Invalid LP format. Use NN-NNN-NN, NNN-NN-NNN, or N-NNNN-NN."
             println("WatchlistViewModel: Add failed - Invalid LP format: $lp")
             return
@@ -83,7 +88,7 @@ class WatchlistViewModel @Inject constructor(
         _lpValidationError.value = null
 
         val entry = WatchlistEntry(
-            licensePlate = lp,
+            licensePlate = if (useLicensePlate) lp else null,
             vehicleType = _newVehicleType.value,
             vehicleColor = _newVehicleColor.value
         )
@@ -92,7 +97,7 @@ class WatchlistViewModel @Inject constructor(
             if (success) {
                 loadWatchlistEntries() // Refresh list
                 dismissAddDialog(true) // Reset fields and close
-                println("WatchlistViewModel: Added entry - $lp")
+                println("WatchlistViewModel: Added entry - ${entry.licensePlate ?: "no license plate (using color/type)"}")
             } else {
                 val errorMsg = "Failed to add entry. LP might already exist or DB error."
                 // _lpValidationError.value = errorMsg // Keep this for dialog specific error
@@ -110,6 +115,36 @@ class WatchlistViewModel @Inject constructor(
                 println("WatchlistViewModel: Deleted entry - $licensePlate")
             } else {
                 val errorMsg = "Failed to delete entry for $licensePlate."
+                _errorEvent.emit(errorMsg) // Emit for Snackbar
+                println("WatchlistViewModel: $errorMsg")
+            }
+        }
+    }
+
+    fun deleteEntryByColorAndType(color: VehicleColor, type: VehicleType) {
+        viewModelScope.launch {
+            val entries = watchlistRepository.getAllEntries()
+            // Find entries matching the color and type without a license plate
+            val matchingEntries = entries.filter { 
+                it.vehicleColor == color && it.vehicleType == type && it.licensePlate == null
+            }
+            
+            if (matchingEntries.isNotEmpty()) {
+                // For simplicity, we'll delete the first matching entry
+                // In a real app, you might need a more sophisticated approach
+                val entryToDelete = matchingEntries.first()
+                val success = watchlistRepository.deleteEntryByColorAndType(color, type)
+                
+                if (success) {
+                    loadWatchlistEntries() // Refresh list
+                    println("WatchlistViewModel: Deleted entry with Color: $color, Type: $type")
+                } else {
+                    val errorMsg = "Failed to delete entry with Color: $color, Type: $type"
+                    _errorEvent.emit(errorMsg) // Emit for Snackbar
+                    println("WatchlistViewModel: $errorMsg")
+                }
+            } else {
+                val errorMsg = "No matching entry found for Color: $color, Type: $type"
                 _errorEvent.emit(errorMsg) // Emit for Snackbar
                 println("WatchlistViewModel: $errorMsg")
             }

@@ -1,5 +1,7 @@
 package com.example.vehiclerecognition.domain.repository
 
+import com.example.vehiclerecognition.model.VehicleColor
+import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.model.WatchlistEntry
 
 /**
@@ -26,6 +28,15 @@ interface WatchlistRepository {
      * @return True if the entry was deleted successfully, false otherwise (e.g., entry not found).
      */
     suspend fun deleteEntry(licensePlate: String): Boolean
+    
+    /**
+     * Deletes an entry from the watchlist based on color and type (for entries without license plates).
+     *
+     * @param color The vehicle color of the entry to delete.
+     * @param type The vehicle type of the entry to delete.
+     * @return True if the entry was deleted successfully, false otherwise.
+     */
+    suspend fun deleteEntryByColorAndType(color: VehicleColor, type: VehicleType): Boolean
 
     /**
      * Retrieves all entries from the watchlist.

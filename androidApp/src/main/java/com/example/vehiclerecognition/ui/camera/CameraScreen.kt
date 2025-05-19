@@ -44,54 +44,54 @@ fun ActualCameraView(
     var cameraProvider: ProcessCameraProvider? by remember { mutableStateOf(null) }
     val previewView = remember { PreviewView(context).apply { controller = null } } // Disable default controller
     val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-    val desiredZoomRatio by cameraViewModel.desiredZoomRatio.collectAsState()
+    val desiredZoomRatio by cameraViewModel.desiredZoomRatio.collectAsState() // Used for display and initial/rebind zoom
     var currentCamera: Camera? by remember { mutableStateOf(null) }
 
-    LaunchedEffect(cameraProvider, desiredZoomRatio, currentCamera) {
-        cameraProvider?.unbindAll()
-        cameraProvider?.let { provider ->
-            val preview = CameraXPreview.Builder().build().also { preview ->
-                preview.setSurfaceProvider(previewView.surfaceProvider)
-            }
+    // Effect to bind camera and set initial/rebind zoom
+    LaunchedEffect(cameraProvider, cameraSelector, lifecycleOwner) { // Added lifecycleOwner
+        val localCameraProvider = cameraProvider ?: return@LaunchedEffect
 
-            // FR 1.3: Frame Processing Hook - ImageAnalysis setup
-            val imageAnalyzer = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also {
-                    it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                        // TODO: Implement actual frame processing here (e.g., pass to a CV model)
-                        // For now, we simulate a detection periodically or based on some trigger.
-                        // cameraViewModel.processDetection(lp, color, type)
-                        imageProxy.close() // Important to close the imageProxy
-                    }
+        Log.d("ActualCameraView", "Camera binding effect triggered. Provider: $localCameraProvider")
+        localCameraProvider.unbindAll() // Unbind all use cases before rebinding
+
+        val preview = CameraXPreview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also {
+                it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                    // TODO: Frame processing
+                    imageProxy.close()
                 }
-            
-            val useCaseGroup = UseCaseGroup.Builder()
-                .addUseCase(preview)
-                .addUseCase(imageAnalyzer)
-                // Potentially add ViewPort for consistent view across use cases
-                .build()
-
-            try {
-                val camera = provider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    useCaseGroup
-                )
-                currentCamera = camera // Store camera instance
-
-                // Apply desired zoom ratio by converting to linear zoom
-                camera.cameraInfo.zoomState.value?.let { zoomState ->
-                    val linearZoom = ratioToLinear(desiredZoomRatio, zoomState.minZoomRatio, zoomState.maxZoomRatio)
-                    camera.cameraControl.setLinearZoom(linearZoom)
-                    Log.d("ActualCameraView", "Applied linear zoom: $linearZoom for ratio: $desiredZoomRatio (minR: ${zoomState.minZoomRatio}, maxR: ${zoomState.maxZoomRatio})")
-                }
-
-            } catch (exc: Exception) {
-                Log.e("ActualCameraView", "Use case binding failed", exc)
-                currentCamera = null
             }
+        
+        val useCaseGroup = UseCaseGroup.Builder()
+            .addUseCase(preview)
+            .addUseCase(imageAnalyzer)
+            .build()
+
+        try {
+            val camera = localCameraProvider.bindToLifecycle(
+                lifecycleOwner, // Use the passed lifecycleOwner
+                cameraSelector,
+                useCaseGroup
+            )
+            currentCamera = camera // Store camera instance for gesture handling
+            Log.d("ActualCameraView", "Camera bound successfully. Current camera set.")
+
+            // Apply ViewModel's zoom ratio when camera is (re)bound
+            camera.cameraInfo.zoomState.value?.let { zoomState ->
+                val initialLinearZoom = ratioToLinear(desiredZoomRatio, zoomState.minZoomRatio, zoomState.maxZoomRatio)
+                camera.cameraControl.setLinearZoom(initialLinearZoom)
+                Log.d("ActualCameraView", "Applied initial/rebind linear zoom: $initialLinearZoom for ratio: $desiredZoomRatio (minR: ${zoomState.minZoomRatio}, maxR: ${zoomState.maxZoomRatio})")
+            } ?: Log.d("ActualCameraView", "ZoomState not available at bind time for initial zoom.")
+
+        } catch (exc: Exception) {
+            Log.e("ActualCameraView", "Use case binding failed", exc)
+            currentCamera = null // Reset on failure
         }
     }
 
@@ -100,6 +100,7 @@ fun ActualCameraView(
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
+            Log.d("ActualCameraView", "CameraProvider obtained: $cameraProvider")
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -108,18 +109,35 @@ fun ActualCameraView(
         modifier = modifier
             .fillMaxSize()
             .pointerInput(Unit) { // Pinch-to-Zoom gesture
-                detectTransformGestures {
-                    _, _, gestureZoomDelta, _ ->
-                    currentCamera?.cameraInfo?.zoomState?.value?.let { currentZoomState ->
-                        val currentRatio = desiredZoomRatio // Use the ViewModel's current desired ratio as base
-                        var newRatio = currentRatio * gestureZoomDelta
-                        // Coerce based on actual camera capabilities if available, else use ViewModel's broader limits
-                        newRatio = newRatio.coerceIn(currentZoomState.minZoomRatio, currentZoomState.maxZoomRatio)
-                        cameraViewModel.onZoomRatioChanged(newRatio)
+                detectTransformGestures { _, _, gestureZoomDelta, _ ->
+                    currentCamera?.let { cam -> // Ensure camera is not null
+                        cam.cameraInfo.zoomState.value?.let { currentZoomState ->
+                            // Read the latest desired ratio from ViewModel as the base for delta calculation
+                            val latestDesiredRatio = cameraViewModel.desiredZoomRatio.value 
+                            var newRatio = latestDesiredRatio * gestureZoomDelta
+                            
+                            // Coerce based on actual camera capabilities
+                            newRatio = newRatio.coerceIn(currentZoomState.minZoomRatio, currentZoomState.maxZoomRatio)
+                            
+                            // Update ViewModel state. This is important for the UI text and for
+                            // the LaunchedEffect above to pick up the correct zoom if the camera rebinds.
+                            cameraViewModel.onZoomRatioChanged(newRatio)
+
+                            // Apply zoom directly to the camera control for real-time effect
+                            val linearZoom = ratioToLinear(newRatio, currentZoomState.minZoomRatio, currentZoomState.maxZoomRatio)
+                            cam.cameraControl.setLinearZoom(linearZoom)
+                            // Log.d("ActualCameraView_Gesture", "Gesture applied linear zoom: $linearZoom for ratio: $newRatio")
+                        }
                     } ?: run {
-                        // Fallback if zoomState is not available yet, use a simpler multiplication
+                        // Fallback if currentCamera or zoomState is not available yet
+                        // This path should ideally not be hit frequently if camera binding is stable
+                        Log.w("ActualCameraView_Gesture", "currentCamera or zoomState not available during gesture. Applying simple zoom.")
                         val currentRatio = cameraViewModel.desiredZoomRatio.value
-                        cameraViewModel.onZoomRatioChanged(currentRatio * gestureZoomDelta)
+                        // Apply a more generic coercion if specific limits aren't known
+                        val newRatioFallback = (currentRatio * gestureZoomDelta).coerceIn(1.0f, 10.0f) 
+                        cameraViewModel.onZoomRatioChanged(newRatioFallback)
+                        // Optionally attempt to set zoom on currentCamera if it exists, even if zoomState was null
+                        currentCamera?.cameraControl?.setZoomRatio(newRatioFallback)
                     }
                 }
             }
@@ -174,7 +192,7 @@ fun CameraScreen(
                     )
                     // Display current zoom ratio from ViewModel for user feedback
                     Text(
-                        text = "Zoom: $" + "%.1f".format(desiredZoomRatio) + "x",
+                        text = "Zoom: " + "%.1f".format(desiredZoomRatio) + "x",
                         color = Color.White,
                         modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).background(Color.Black.copy(alpha = 0.5f)).padding(4.dp)
                     )
@@ -205,10 +223,10 @@ fun CameraScreen(
             if (hasCameraPermission) {
                 Row(modifier = Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     Button(onClick = { viewModel.simulateLPDetection("12-345-67") }) {
-                        Text("Simulate LP Match")
+                        Text("Match")
                     }
                     Button(onClick = { viewModel.simulateLPDetection("00-000-00") }) {
-                        Text("Simulate No Match")
+                        Text("No Match")
                     }
                 }
             }

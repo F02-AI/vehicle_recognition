@@ -1,5 +1,6 @@
 package com.example.vehiclerecognition.ui.camera
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.vehiclerecognition.domain.logic.VehicleMatcher
@@ -14,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 /**
  * ViewModel for the Camera screen.
@@ -44,8 +47,10 @@ class CameraViewModel @Inject constructor(
     private val _matchFound = MutableStateFlow<Boolean>(false)
     val matchFound: StateFlow<Boolean> = _matchFound.asStateFlow()
 
+    private var hideMatchFoundJob: Job? = null // Job to auto-hide the "MATCH FOUND" message
+
     init {
-        println("CameraViewModel initialized.")
+        Log.d("CameraViewModel","CameraViewModel initialized.")
         // In a real app, camera initialization and frame processing would start here.
     }
 
@@ -53,27 +58,27 @@ class CameraViewModel @Inject constructor(
         // Assume ActualCameraView will handle coercing this to the camera's actual min/max capabilities.
         // Here we just store the desired ratio, perhaps with a sensible app-level min/max.
         _desiredZoomRatio.value = newRatio.coerceIn(1.0f, 10.0f) // Example: Max 10x desired by user
-        println("CameraViewModel: Desired zoom ratio changed to ${'$'}{_desiredZoomRatio.value}")
+        Log.d("CameraViewModel","CameraViewModel: Desired zoom ratio changed to ${_desiredZoomRatio.value}")
     }
 
     /**
-     * Simulates processing a detected vehicle. In a real app, this would be called
-     * with data from the camera frame processing pipeline.
+     * Processes a detected vehicle (either from actual camera frames or simulation).
+     * Updates the match status based on the current detection mode.
      */
     fun processDetection(licensePlate: String?, color: VehicleColor?, type: VehicleType?) {
         val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate, color, type)
         _lastDetectedVehicle.value = detectedVehicle
-        println("CameraViewModel: Processing detection - LP: $licensePlate, Color: $color, Type: $type")
+        Log.d("CameraViewModel", "Processing detection - LP: $licensePlate, Color: $color, Type: $type")
 
         viewModelScope.launch {
             val currentDetectionMode = settingsRepository.getDetectionMode()
             val isMatch = vehicleMatcher.findMatch(detectedVehicle, currentDetectionMode)
             _matchFound.value = isMatch
             if (isMatch) {
-                println("CameraViewModel: MATCH FOUND based on mode $currentDetectionMode!")
+                Log.d("CameraViewModel", "MATCH FOUND based on mode $currentDetectionMode!")
                 soundAlertPlayer.playAlert() // FR 1.12
             } else {
-                println("CameraViewModel: No match found for mode $currentDetectionMode.")
+                Log.d("CameraViewModel", "No match found for mode $currentDetectionMode.")
             }
         }
     }
@@ -82,15 +87,40 @@ class CameraViewModel @Inject constructor(
     fun simulateCarDetection(lp: String, vColor: VehicleColor, vType: VehicleType) {
         processDetection(lp, vColor, vType)
     }
+
+    /**
+     * Simulates an LP detection, specifically for the "LP Match" and "No Match" buttons.
+     * For "LP Match" (lp = "12-345-67"), it forces a match if the current mode is LP-based.
+     * For "No Match" (lp = "00-000-00"), it forces no match.
+     */
     fun simulateLPDetection(lp: String) {
-        processDetection(lp, null, null)
+        viewModelScope.launch {
+            hideMatchFoundJob?.cancel() // Cancel any existing auto-hide job
+
+            if (lp == "12-345-67") { // "Match" button pressed
+                _matchFound.value = true
+                soundAlertPlayer.playAlert()
+                Log.d("CameraViewModel_Simulate", "Simulated Match: Displaying message and playing sound.")
+                hideMatchFoundJob = launch {
+                    delay(10000) // 10 seconds
+                    _matchFound.value = false
+                    Log.d("CameraViewModel_Simulate", "Auto-hiding 'MATCH FOUND' message after 10s.")
+                }
+            } else if (lp == "00-000-00") { // "No Match" button pressed
+                 _matchFound.value = false
+                 Log.d("CameraViewModel_Simulate", "Simulated No Match: Hiding message.")
+            }
+            // The actual detection mode is now irrelevant for these simulation buttons.
+            // Generic processDetection call for other LPs is removed as it's not used by current UI.
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
+        hideMatchFoundJob?.cancel() // Ensure the job is cancelled if ViewModel is cleared
         // Release camera resources if any were held by ViewModel (though typically handled by lifecycle observers)
         // If SoundAlertPlayer holds significant resources and is ViewModel scoped, release here.
         // (soundAlertPlayer as? AndroidSoundAlertPlayer)?.release() // Example if it needs explicit release
-        println("CameraViewModel: onCleared")
+        Log.d("CameraViewModel", "CameraViewModel: onCleared")
     }
 } 
