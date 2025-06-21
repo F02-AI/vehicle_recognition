@@ -10,6 +10,7 @@ import com.example.vehiclerecognition.model.WatchlistEntry
 /**
  * Implements the logic for matching detected vehicle attributes against the watchlist.
  * Adheres to FR 1.11, including license plate format validation for LP-based modes.
+ * License plate matching compares only numeric digits, excluding dashes and formatting.
  *
  * @property watchlistRepository Repository to access watchlist data.
  * @property licensePlateValidator Validator for license plate formats.
@@ -42,9 +43,16 @@ class VehicleMatcher(
 
         // FR 1.11: For modes that include 'LP', the detected License Plate MUST first be checked
         // to ensure it conforms to one of the required Israeli formats.
+        // Modified to validate numeric digits (7-8 digits) rather than exact format matching.
         if (detectionModeRequiresLP(detectionMode)) {
-            if (detectedVehicle.licensePlate == null || !licensePlateValidator.isValid(detectedVehicle.licensePlate)) {
-                return false // Invalid or missing LP for LP-dependent mode
+            if (detectedVehicle.licensePlate == null) {
+                return false // Missing LP for LP-dependent mode
+            }
+            
+            // Check if the numeric portion has valid Israeli digit count (7-8 digits)
+            val detectedDigits = extractNumericDigits(detectedVehicle.licensePlate)
+            if (detectedDigits.length !in 7..8) {
+                return false // Invalid digit count for Israeli license plates
             }
         }
 
@@ -60,12 +68,28 @@ class VehicleMatcher(
         }
     }
 
+    /**
+     * Extracts only numeric digits from a license plate string, removing dashes and other formatting
+     */
+    private fun extractNumericDigits(licensePlate: String?): String {
+        return licensePlate?.replace(Regex("[^0-9]"), "") ?: ""
+    }
+
+    /**
+     * Compares license plates by numeric digits only, ignoring formatting like dashes
+     */
+    private fun licensePlatesMatch(detected: String?, entry: String?): Boolean {
+        val detectedDigits = extractNumericDigits(detected)
+        val entryDigits = extractNumericDigits(entry)
+        return detectedDigits.isNotEmpty() && detectedDigits == entryDigits
+    }
+
     private fun isMatch(detected: DetectedVehicle, entry: WatchlistEntry, mode: DetectionMode): Boolean {
         return when (mode) {
-            DetectionMode.LP -> detected.licensePlate == entry.licensePlate
-            DetectionMode.LP_COLOR -> detected.licensePlate == entry.licensePlate && detected.color == entry.vehicleColor
-            DetectionMode.LP_TYPE -> detected.licensePlate == entry.licensePlate && detected.type == entry.vehicleType
-            DetectionMode.LP_COLOR_TYPE -> detected.licensePlate == entry.licensePlate &&
+            DetectionMode.LP -> licensePlatesMatch(detected.licensePlate, entry.licensePlate)
+            DetectionMode.LP_COLOR -> licensePlatesMatch(detected.licensePlate, entry.licensePlate) && detected.color == entry.vehicleColor
+            DetectionMode.LP_TYPE -> licensePlatesMatch(detected.licensePlate, entry.licensePlate) && detected.type == entry.vehicleType
+            DetectionMode.LP_COLOR_TYPE -> licensePlatesMatch(detected.licensePlate, entry.licensePlate) &&
                     detected.color == entry.vehicleColor &&
                     detected.type == entry.vehicleType
             DetectionMode.COLOR_TYPE -> detected.color == entry.vehicleColor && detected.type == entry.vehicleType

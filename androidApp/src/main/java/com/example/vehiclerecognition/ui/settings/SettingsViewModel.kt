@@ -4,10 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
 import com.example.vehiclerecognition.model.DetectionMode
+import com.example.vehiclerecognition.data.models.LicensePlateSettings
+import com.example.vehiclerecognition.data.repositories.LicensePlateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -19,21 +22,30 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val licensePlateRepository: LicensePlateRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.Loading)
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
+    private val _licensePlateSettings = MutableStateFlow(LicensePlateSettings())
+    val licensePlateSettings: StateFlow<LicensePlateSettings> = _licensePlateSettings.asStateFlow()
+
     init {
-        loadCurrentDetectionMode()
+        loadSettings()
     }
 
-    private fun loadCurrentDetectionMode() {
+    private fun loadSettings() {
         viewModelScope.launch {
+            // Load detection mode
             val currentMode = settingsRepository.getDetectionMode()
             _uiState.value = SettingsUiState.Success(currentMode, DetectionMode.values().toList())
-            println("SettingsViewModel: Loaded detection mode - $currentMode")
+            
+            // Load license plate settings
+            licensePlateRepository.settings.collect { settings ->
+                _licensePlateSettings.value = settings
+            }
         }
     }
 
@@ -41,8 +53,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.saveDetectionMode(mode)
             // Update UI state to reflect the change immediately
-            _uiState.value = SettingsUiState.Success(mode, DetectionMode.values().toList())
-            println("SettingsViewModel: Selected and saved detection mode - $mode")
+            if (_uiState.value is SettingsUiState.Success) {
+                _uiState.value = (_uiState.value as SettingsUiState.Success).copy(selectedMode = mode)
+            }
+        }
+    }
+
+    fun updateLicensePlateSettings(settings: LicensePlateSettings) {
+        viewModelScope.launch {
+            licensePlateRepository.updateSettings(settings)
         }
     }
 }

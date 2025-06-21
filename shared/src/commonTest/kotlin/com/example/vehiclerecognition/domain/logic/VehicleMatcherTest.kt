@@ -42,7 +42,7 @@ class VehicleMatcherTest {
         val repo = MockWatchlistRepository()
         repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
         val matcher = VehicleMatcher(repo, validator)
-        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "12-345-67X") // Invalid format
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "12-345") // Invalid - only 5 digits
         assertFalse(matcher.findMatch(detected, DetectionMode.LP))
     }
 
@@ -111,5 +111,66 @@ class VehicleMatcherTest {
         val matcher = VehicleMatcher(repo, validator)
         val detected = VehicleMatcher.DetectedVehicle(color = VehicleColor.GREEN)
         assertTrue(matcher.findMatch(detected, DetectionMode.COLOR))
+    }
+
+    // New tests for numeric-only matching (excluding dashes)
+    @Test
+    fun `findMatch returns true for LP match with different formatting but same digits`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
+        val matcher = VehicleMatcher(repo, validator)
+        // Detected plate has different format but same digits (1234567)
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "123-4567")
+        assertTrue(matcher.findMatch(detected, DetectionMode.LP))
+    }
+
+    @Test
+    fun `findMatch returns true for LP match ignoring dashes and spaces`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
+        val matcher = VehicleMatcher(repo, validator)
+        // Detected plate with spaces instead of dashes
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "12 345 67")
+        assertTrue(matcher.findMatch(detected, DetectionMode.LP))
+    }
+
+    @Test
+    fun `findMatch returns true for LP match with numeric-only detected plate`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
+        val matcher = VehicleMatcher(repo, validator)
+        // Detected plate with no formatting, just digits
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "1234567")
+        assertTrue(matcher.findMatch(detected, DetectionMode.LP))
+    }
+
+    @Test
+    fun `findMatch returns false for LP match with different digits despite similar formatting`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
+        val matcher = VehicleMatcher(repo, validator)
+        // Different digits, same format
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "12-345-68")
+        assertFalse(matcher.findMatch(detected, DetectionMode.LP))
+    }
+
+    @Test
+    fun `findMatch returns true for LP_COLOR match with different formatting but same digits`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("11-111-11", VehicleType.MOTORCYCLE, VehicleColor.RED))
+        val matcher = VehicleMatcher(repo, validator)
+        // Different format, same digits and color
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "1111111", color = VehicleColor.RED)
+        assertTrue(matcher.findMatch(detected, DetectionMode.LP_COLOR))
+    }
+
+    @Test
+    fun `findMatch returns false for empty digits in license plate`() = runBlocking {
+        val repo = MockWatchlistRepository()
+        repo.addEntry(WatchlistEntry("12-345-67", VehicleType.CAR, VehicleColor.BLUE))
+        val matcher = VehicleMatcher(repo, validator)
+        // Plate with no digits (only dashes)
+        val detected = VehicleMatcher.DetectedVehicle(licensePlate = "---")
+        assertFalse(matcher.findMatch(detected, DetectionMode.LP))
     }
 } 
