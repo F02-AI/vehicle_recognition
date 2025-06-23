@@ -94,15 +94,14 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     
     // Phase 2: ML/AI Libraries for License Plate Recognition
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.5.0")
     
     // Phase 2: OCR Libraries (using available alternatives)
     // Note: Tesseract and OpenCV require special setup, using ML Kit for now
-    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     
     // Phase 2: Coroutines for background processing
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
