@@ -59,3 +59,10 @@ replay_pid*
 
 .venvo/
 .venv/
+
+
+script_videos/
+input_videos/*.mp4
+*.mp4
+
+output/
