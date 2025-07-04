@@ -114,11 +114,11 @@ fun SettingsContent(
                 }
             }
             
-            // License Plate Recognition Settings
-            OcrModelSelector(
-                settings = licensePlateSettings,
-                onSettingsChanged = onLicensePlateSettingsChanged
-            )
+            // License Plate Recognition Settings - Hidden as requested
+            // OcrModelSelector(
+            //     settings = licensePlateSettings,
+            //     onSettingsChanged = onLicensePlateSettingsChanged
+            // )
         }
     }
 }

@@ -120,6 +120,13 @@ class CameraViewModel @Inject constructor(
         
         // License plate processor will be initialized when settings are first collected
         
+        // Initialize zoom with saved value from settings
+        viewModelScope.launch {
+            val initialSettings = licensePlateRepository.settings.first()
+            _desiredZoomRatio.value = initialSettings.cameraZoomRatio
+            Log.d("CameraViewModel", "Initialized zoom ratio from saved settings: ${initialSettings.cameraZoomRatio}")
+        }
+        
         // Start collecting settings updates and reinitialize detector when GPU settings change
         viewModelScope.launch {
             var previousGpuSetting: Boolean? = null
@@ -127,6 +134,12 @@ class CameraViewModel @Inject constructor(
             
             licensePlateRepository.settings.collect { settings ->
                 _currentSettings.value = settings
+                
+                // Update zoom if it changed in settings (but not if it's the initial load)
+                if (!isFirstCollection && settings.cameraZoomRatio != _desiredZoomRatio.value) {
+                    _desiredZoomRatio.value = settings.cameraZoomRatio
+                    Log.d("CameraViewModel", "Updated zoom ratio from settings: ${settings.cameraZoomRatio}")
+                }
                 
                 // Initialize detector on first collection, reinitialize on subsequent GPU changes
                 val shouldReinitialize = if (isFirstCollection) {
@@ -201,6 +214,16 @@ class CameraViewModel @Inject constructor(
         // Store the zoom ratio - coercion is handled by the camera view based on actual camera capabilities
         _desiredZoomRatio.value = newRatio
         Log.d("CameraViewModel","CameraViewModel: Desired zoom ratio changed to ${_desiredZoomRatio.value}")
+        
+        // Persist the zoom ratio to settings
+        viewModelScope.launch {
+            try {
+                licensePlateRepository.updateCameraZoomRatio(newRatio)
+                Log.d("CameraViewModel", "Zoom ratio persisted: $newRatio")
+            } catch (e: Exception) {
+                Log.e("CameraViewModel", "Failed to persist zoom ratio", e)
+            }
+        }
     }
 
     /**

@@ -45,6 +45,7 @@ class LicensePlateRepository @Inject constructor(
         private val NUMERIC_ONLY_MODE_KEY = booleanPreferencesKey("numeric_only_mode")
         private val ISRAELI_FORMAT_VALIDATION_KEY = booleanPreferencesKey("israeli_format_validation")
         private val ENABLE_DEBUG_VIDEO_KEY = booleanPreferencesKey("enable_debug_video")
+        private val CAMERA_ZOOM_RATIO_KEY = floatPreferencesKey("camera_zoom_ratio")
     }
     
     /**
@@ -61,11 +62,12 @@ class LicensePlateRepository @Inject constructor(
             },
             processingInterval = preferences[PROCESSING_INTERVAL_KEY] ?: 1,
             minConfidenceThreshold = preferences[MIN_CONFIDENCE_KEY] ?: 0.5f,
-            enableGpuAcceleration = preferences[GPU_ACCELERATION_KEY] ?: false,
+            enableGpuAcceleration = preferences[GPU_ACCELERATION_KEY] ?: true,
             enableOcr = preferences[ENABLE_OCR_KEY] ?: true,
             enableNumericOnlyMode = preferences[NUMERIC_ONLY_MODE_KEY] ?: true,
             enableIsraeliFormatValidation = preferences[ISRAELI_FORMAT_VALIDATION_KEY] ?: true,
-            enableDebugVideo = preferences[ENABLE_DEBUG_VIDEO_KEY] ?: false
+            enableDebugVideo = preferences[ENABLE_DEBUG_VIDEO_KEY] ?: false,
+            cameraZoomRatio = preferences[CAMERA_ZOOM_RATIO_KEY] ?: 1.0f
         )
     }
     
@@ -82,6 +84,16 @@ class LicensePlateRepository @Inject constructor(
             preferences[NUMERIC_ONLY_MODE_KEY] = settings.enableNumericOnlyMode
             preferences[ISRAELI_FORMAT_VALIDATION_KEY] = settings.enableIsraeliFormatValidation
             preferences[ENABLE_DEBUG_VIDEO_KEY] = settings.enableDebugVideo
+            preferences[CAMERA_ZOOM_RATIO_KEY] = settings.cameraZoomRatio
+        }
+    }
+    
+    /**
+     * Updates only the camera zoom ratio for quick persistence
+     */
+    suspend fun updateCameraZoomRatio(zoomRatio: Float) {
+        dataStore.edit { preferences ->
+            preferences[CAMERA_ZOOM_RATIO_KEY] = zoomRatio
         }
     }
     
@@ -117,7 +129,12 @@ class LicensePlateRepository @Inject constructor(
     val isProcessing: StateFlow<Boolean> = licensePlateProcessor.isProcessing
     
     /**
-     * Processes a camera frame for license plate detection
+     * Processes a camera frame for license plate detection with enhanced OCR
+     * Features:
+     * - GPU acceleration enabled by default for better performance
+     * - Intelligent image scaling based on ML Kit recommendations
+     * - High-resolution cropping from original camera frame for optimal OCR accuracy
+     * - Only processes OCR when detection is present (performance optimization)
      */
     suspend fun processFrame(bitmap: Bitmap, settings: LicensePlateSettings): ProcessorResult {
         return licensePlateProcessor.processFrame(bitmap, settings)

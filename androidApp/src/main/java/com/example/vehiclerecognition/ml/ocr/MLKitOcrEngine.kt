@@ -1,6 +1,7 @@
 package com.example.vehiclerecognition.ml.ocr
 
 import android.graphics.Bitmap
+import android.util.Log
 import com.example.vehiclerecognition.data.models.OcrResult
 import com.example.vehiclerecognition.ml.processors.NumericPlateValidator
 import com.google.mlkit.vision.common.InputImage
@@ -15,9 +16,14 @@ import kotlin.coroutines.resume
 
 /**
  * ML Kit OCR engine implementation using Google's text recognition
+ * Enhanced to work optimally with pre-scaled images for better accuracy
  */
 @Singleton
 class MLKitOcrEngine @Inject constructor() : OcrEngine {
+    
+    companion object {
+        private const val TAG = "MLKitOcrEngine"
+    }
     
     private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private var isInitialized = false
@@ -25,8 +31,10 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
             isInitialized = true
+            Log.d(TAG, "ML Kit OCR engine initialized successfully")
             true
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize ML Kit OCR engine", e)
             isInitialized = false
             false
         }
@@ -36,42 +44,46 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
         val startTime = System.currentTimeMillis()
         
         try {
+            Log.d(TAG, "Processing image: ${bitmap.width}x${bitmap.height} pixels")
+            
+            // Create InputImage from the pre-scaled bitmap
+            // The bitmap has already been optimally scaled by LicensePlateProcessor
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             
             val result = suspendCancellableCoroutine<String> { continuation ->
                 textRecognizer.process(inputImage)
                     .addOnSuccessListener { visionText ->
-                        // Extract all text and filter for numeric content
-                        val allText = visionText.textBlocks.joinToString(" ") { block ->
-                            block.lines.joinToString(" ") { line ->
-                                line.elements.joinToString("") { element ->
-                                    element.text
-                                }
-                            }
-                        }
+                        // Extract all text with improved processing for license plates
+                        val allText = extractTextFromVisionResult(visionText)
+                        Log.d(TAG, "ML Kit raw text result: '$allText'")
                         continuation.resume(allText)
                     }
                     .addOnFailureListener { exception ->
+                        Log.e(TAG, "ML Kit text recognition failed", exception)
                         continuation.resume("")
                     }
             }
             
-            // Apply numeric-only filtering
+            // Apply numeric-only filtering and Israeli license plate validation
             val numericText = NumericPlateValidator.extractNumericOnly(result)
             val formattedText = NumericPlateValidator.validateAndFormatPlate(numericText)
             val isValidFormat = formattedText != null
             
             val processingTime = System.currentTimeMillis() - startTime
             
+            Log.d(TAG, "OCR processing completed in ${processingTime}ms")
+            Log.d(TAG, "Extracted numeric text: '$numericText', formatted: '$formattedText', valid: $isValidFormat")
+            
             OcrResult(
                 text = numericText,
-                confidence = if (numericText.isNotEmpty()) 0.75f else 0.0f,
+                confidence = if (numericText.isNotEmpty()) calculateConfidence(result, numericText) else 0.0f,
                 isValidFormat = isValidFormat,
                 formattedText = formattedText,
                 processingTimeMs = processingTime
             )
         } catch (e: Exception) {
             val processingTime = System.currentTimeMillis() - startTime
+            Log.e(TAG, "OCR processing failed", e)
             OcrResult(
                 text = "",
                 confidence = 0.0f,
@@ -82,12 +94,56 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
         }
     }
     
+    /**
+     * Enhanced text extraction from ML Kit Vision result
+     * Optimized for license plate recognition
+     */
+    private fun extractTextFromVisionResult(visionText: com.google.mlkit.vision.text.Text): String {
+        // Strategy 1: Try to get text from text blocks with highest confidence
+        val blockTexts = visionText.textBlocks.map { block ->
+            block.lines.joinToString(" ") { line ->
+                line.elements.joinToString("") { element ->
+                    element.text
+                }
+            }
+        }
+        
+        if (blockTexts.isNotEmpty()) {
+            val combinedText = blockTexts.joinToString(" ")
+            if (combinedText.isNotBlank()) {
+                return combinedText.trim()
+            }
+        }
+        
+        // Strategy 2: Fallback to overall recognized text
+        return visionText.text.trim()
+    }
+    
+    /**
+     * Calculate confidence score based on text quality and length
+     * Higher confidence for longer, more complete license plate numbers
+     */
+    private fun calculateConfidence(rawText: String, numericText: String): Float {
+        return when {
+            numericText.isEmpty() -> 0.0f
+            numericText.length >= 7 -> 0.9f // Full Israeli license plate
+            numericText.length >= 5 -> 0.75f // Partial but substantial
+            numericText.length >= 3 -> 0.6f // Some digits detected
+            else -> 0.4f // Very few digits
+        }
+    }
+    
     override fun release() {
-        textRecognizer.close()
-        isInitialized = false
+        try {
+            textRecognizer.close()
+            isInitialized = false
+            Log.d(TAG, "ML Kit OCR engine resources released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing ML Kit OCR engine resources", e)
+        }
     }
     
     override fun isReady(): Boolean = isInitialized
     
-    override fun getEngineName(): String = "ML Kit"
+    override fun getEngineName(): String = "ML Kit (Enhanced)"
 } 

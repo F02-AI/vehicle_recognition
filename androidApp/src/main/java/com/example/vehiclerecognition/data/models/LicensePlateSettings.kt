@@ -7,11 +7,12 @@ data class LicensePlateSettings(
     val selectedOcrModel: OcrModelType = OcrModelType.ML_KIT,
     val processingInterval: Int = 1, // Process every Nth frame
     val minConfidenceThreshold: Float = 0.5f,
-    val enableGpuAcceleration: Boolean = false,
+    val enableGpuAcceleration: Boolean = true, // Enable GPU by default
     val enableOcr: Boolean = true, // Enable/disable OCR processing
     val enableNumericOnlyMode: Boolean = true,
     val enableIsraeliFormatValidation: Boolean = true,
-    val enableDebugVideo: Boolean = false // Play test video instead of camera feed
+    val enableDebugVideo: Boolean = false, // Play test video instead of camera feed
+    val cameraZoomRatio: Float = 1.0f // Remember the last camera zoom level
 )
 
 /**

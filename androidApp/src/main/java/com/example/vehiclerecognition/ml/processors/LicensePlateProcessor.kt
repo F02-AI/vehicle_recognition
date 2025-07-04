@@ -1,6 +1,7 @@
 package com.example.vehiclerecognition.ml.processors
 
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.graphics.RectF
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
@@ -40,6 +41,17 @@ class LicensePlateProcessor @Inject constructor(
     private val tesseractOcrEngine: TesseractOcrEngine,
     private val paddleOcrEngine: PaddleOcrEngine
 ) {
+    
+    companion object {
+        // ML Kit OCR recommended resolution guidelines
+        // Based on ML Kit documentation: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+        private const val MIN_CHAR_SIZE_PX = 16 // Minimum 16x16 pixels per character
+        private const val MAX_CHAR_SIZE_PX = 24 // Maximum 24x24 pixels per character (no benefit beyond this)
+        private const val OPTIMAL_HEIGHT_MIN = 32 // Minimum height for license plate OCR
+        private const val OPTIMAL_HEIGHT_MAX = 128 // Maximum height for optimal performance
+        private const val OPTIMAL_WIDTH_MIN = 128 // Minimum width for license plate OCR  
+        private const val OPTIMAL_WIDTH_MAX = 512 // Maximum width for optimal performance
+    }
     
     private val _detectedPlates = MutableStateFlow<List<PlateDetection>>(emptyList())
     val detectedPlates: StateFlow<List<PlateDetection>> = _detectedPlates.asStateFlow()
@@ -89,7 +101,7 @@ class LicensePlateProcessor @Inject constructor(
     
     /**
      * Process frame for license plate detection and OCR
-     * Similar to the frame processing logic in Python script
+     * Enhanced with intelligent image scaling for optimal OCR accuracy
      */
     suspend fun processFrame(
         bitmap: Bitmap,
@@ -115,19 +127,19 @@ class LicensePlateProcessor @Inject constructor(
                 )
             }
             
-            // Step 3: Process OCR on the best detection if OCR is enabled
+            // Step 3: Process OCR on the best detection if OCR is enabled and detection exists
             val bestDetection = plateDetections.maxByOrNull { it.confidence }
             if (bestDetection != null && settings.enableOcr) {
                 
-                // Crop the license plate region with expansion (similar to Python script)
-                val croppedBitmap = cropLicensePlateRegion(bitmap, bestDetection.boundingBox)
+                // Crop and scale the license plate region from MAX RESOLUTION for optimal OCR
+                val optimizedCroppedBitmap = cropAndScaleLicensePlateForOCR(bitmap, bestDetection.boundingBox)
                 
-                if (croppedBitmap != null) {
+                if (optimizedCroppedBitmap != null) {
                     // Get the appropriate OCR engine
                     val ocrEngine = getOcrEngine(settings.selectedOcrModel)
                     
                     if (ocrEngine?.isReady() == true) {
-                        val ocrResult = ocrEngine.processImage(croppedBitmap)
+                        val ocrResult = ocrEngine.processImage(optimizedCroppedBitmap)
                         
                         // Update the best detection with OCR results
                         val updatedDetection = bestDetection.copy(
@@ -164,10 +176,13 @@ class LicensePlateProcessor @Inject constructor(
     }
     
     /**
-     * Crops the license plate region from the full image with expansion
-     * Similar to the cropping logic in Python script with 10% expansion
+     * Enhanced cropping and scaling method for optimal OCR performance
+     * Based on ML Kit's recommended resolution guidelines:
+     * - Minimum: 16x16 pixels per character
+     * - Maximum: 24x24 pixels per character (no benefit beyond this)
+     * - Optimal: Keep between recommended min and max resolutions
      */
-    private fun cropLicensePlateRegion(bitmap: Bitmap, boundingBox: RectF): Bitmap? {
+    private fun cropAndScaleLicensePlateForOCR(bitmap: Bitmap, boundingBox: RectF): Bitmap? {
         try {
             val imageWidth = bitmap.width.toFloat()
             val imageHeight = bitmap.height.toFloat()
@@ -178,7 +193,7 @@ class LicensePlateProcessor @Inject constructor(
             val width = boundingBox.width()
             val height = boundingBox.height()
             
-            // Expand by 10% (similar to Python script's 1.1 factor)
+            // Expand by 10% for better OCR context (similar to Python script's 1.1 factor)
             val newWidth = width * 1.1f
             val newHeight = height * 1.1f
             
@@ -191,19 +206,88 @@ class LicensePlateProcessor @Inject constructor(
             val cropWidth = (newRight - newLeft).toInt()
             val cropHeight = (newBottom - newTop).toInt()
             
-            if (cropWidth > 0 && cropHeight > 0) {
-                return Bitmap.createBitmap(
-                    bitmap,
-                    newLeft.toInt(),
-                    newTop.toInt(),
-                    cropWidth,
-                    cropHeight
-                )
+            if (cropWidth <= 0 || cropHeight <= 0) {
+                return null
             }
+            
+            // Step 1: Crop the license plate region from the MAX RESOLUTION image
+            val croppedBitmap = Bitmap.createBitmap(
+                bitmap,
+                newLeft.toInt(),
+                newTop.toInt(),
+                cropWidth,
+                cropHeight
+            )
+            
+            // Step 2: Apply intelligent scaling based on ML Kit guidelines
+            return scaleImageForOptimalOCR(croppedBitmap)
+            
         } catch (e: Exception) {
             // Return null if cropping fails
+            return null
         }
-        return null
+    }
+    
+    /**
+     * Scales the cropped image to optimal resolution for ML Kit OCR
+     * Following ML Kit's recommendations:
+     * - If too small: upscale to minimum recommended size
+     * - If too large: downscale to maximum recommended size  
+     * - If optimal: keep as is
+     */
+    private fun scaleImageForOptimalOCR(croppedBitmap: Bitmap): Bitmap {
+        val originalWidth = croppedBitmap.width
+        val originalHeight = croppedBitmap.height
+        
+        // Determine scaling factor based on ML Kit guidelines
+        val scaleFactor = when {
+            // Case 1: Too small - upscale to minimum recommended resolution
+            originalHeight < OPTIMAL_HEIGHT_MIN || originalWidth < OPTIMAL_WIDTH_MIN -> {
+                val heightScale = if (originalHeight < OPTIMAL_HEIGHT_MIN) {
+                    OPTIMAL_HEIGHT_MIN.toFloat() / originalHeight
+                } else 1f
+                
+                val widthScale = if (originalWidth < OPTIMAL_WIDTH_MIN) {
+                    OPTIMAL_WIDTH_MIN.toFloat() / originalWidth
+                } else 1f
+                
+                // Use the larger scale to ensure both dimensions meet minimum requirements
+                maxOf(heightScale, widthScale)
+            }
+            
+            // Case 2: Too large - downscale to maximum recommended resolution
+            originalHeight > OPTIMAL_HEIGHT_MAX || originalWidth > OPTIMAL_WIDTH_MAX -> {
+                val heightScale = if (originalHeight > OPTIMAL_HEIGHT_MAX) {
+                    OPTIMAL_HEIGHT_MAX.toFloat() / originalHeight
+                } else 1f
+                
+                val widthScale = if (originalWidth > OPTIMAL_WIDTH_MAX) {
+                    OPTIMAL_WIDTH_MAX.toFloat() / originalWidth
+                } else 1f
+                
+                // Use the smaller scale to ensure both dimensions stay within maximum limits
+                minOf(heightScale, widthScale)
+            }
+            
+            // Case 3: Within optimal range - keep as is
+            else -> 1f
+        }
+        
+        // Apply scaling if needed
+        return if (scaleFactor != 1f) {
+            val newWidth = (originalWidth * scaleFactor).toInt()
+            val newHeight = (originalHeight * scaleFactor).toInt()
+            
+            // Use high-quality scaling for better OCR results
+            val matrix = Matrix().apply {
+                setScale(scaleFactor, scaleFactor)
+            }
+            
+            Bitmap.createBitmap(croppedBitmap, 0, 0, originalWidth, originalHeight, matrix, true)
+        } else {
+            // No scaling needed, return original cropped bitmap
+            croppedBitmap
+        }
     }
     
     /**

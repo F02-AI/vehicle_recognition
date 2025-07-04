@@ -1,0 +1,16 @@
+ultralytics
+transformers
+torch
+tiktoken
+protobuf
+sentencepiece
+opencv-python
+requests
+tqdm
+pytesseract
+tensorflow
+numpy
+Pillow
+onnx
+onnx-tf
+onnxsim

@@ -895,12 +895,13 @@ fun CameraScreen(
             TopAppBar(
                 title = { Text("Vehicle Recognition") },
                 actions = {
-                    IconButton(onClick = { viewModel.toggleDebugInfo() }) {
-                        Icon(
-                            imageVector = if (viewModel.showDebugInfo.collectAsState().value) Icons.Filled.BugReport else Icons.Outlined.BugReport,
-                            contentDescription = "Toggle Debug Info"
-                        )
-                    }
+                    // Debug icon hidden as requested
+                    // IconButton(onClick = { viewModel.toggleDebugInfo() }) {
+                    //     Icon(
+                    //         imageVector = if (viewModel.showDebugInfo.collectAsState().value) Icons.Filled.BugReport else Icons.Outlined.BugReport,
+                    //         contentDescription = "Toggle Debug Info"
+                    //     )
+                    // }
                 }
             )
         }
