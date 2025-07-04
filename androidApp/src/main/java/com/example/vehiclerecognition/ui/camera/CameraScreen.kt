@@ -47,6 +47,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,6 +58,7 @@ import androidx.core.content.ContextCompat
 import com.example.vehiclerecognition.data.models.PlateDetection
 import com.example.vehiclerecognition.data.models.VehicleDetection
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
+import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.ml.detection.LicensePlateDetector
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -182,6 +184,21 @@ fun ByteBuffer.toByteArray(): ByteArray {
     val data = ByteArray(remaining())
     get(data) // Copy the buffer into a byte array
     return data // Return the byte array
+}
+
+/**
+ * Extension function to convert VehicleColor enum to Compose Color
+ */
+fun VehicleColor.toComposeColor(): Color {
+    return when (this) {
+        VehicleColor.RED -> Color.Red
+        VehicleColor.BLUE -> Color.Blue
+        VehicleColor.GREEN -> Color.Green
+        VehicleColor.WHITE -> Color.White
+        VehicleColor.BLACK -> Color.Black
+        VehicleColor.GRAY -> Color.Gray
+        VehicleColor.YELLOW -> Color.Yellow
+    }
 }
 
 /**
@@ -518,6 +535,8 @@ fun ActualCameraView(
                             Log.d("DebugVideoPlayer", "Overlay Box size: ${coordinates.size.width}x${coordinates.size.height}")
                         }
                 ) {
+                    val textMeasurer = rememberTextMeasurer()
+                    
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         Log.d("DebugVideoPlayer", "Canvas size: ${size.width}x${size.height}")
                         
@@ -551,8 +570,8 @@ fun ActualCameraView(
                                 frameRotation
                             )
                             
-                            // Choose color based on vehicle type
-                            val vehicleColor = when (vehicle.classId) {
+                            // Use detected color or fallback to class-based color
+                            val vehicleColor = vehicle.detectedColor?.toComposeColor() ?: when (vehicle.classId) {
                                 2 -> Color.Blue    // Car - Blue
                                 3 -> Color.Cyan    // Motorcycle - Cyan
                                 5 -> Color.Yellow  // Bus - Yellow
@@ -577,6 +596,46 @@ fun ActualCameraView(
                                 topLeft = rect.topLeft,
                                 size = rect.size,
                                 style = Stroke(width = 4.dp.toPx())
+                            )
+                            
+                            // Draw text labels above the bounding box
+                            val vehicleClass = vehicle.className.lowercase()
+                            val primaryColorText = vehicle.detectedColor?.name?.lowercase() ?: "no_color"
+                            val secondaryColorText = vehicle.secondaryColor?.name?.lowercase()
+                            val colorText = if (secondaryColorText != null) {
+                                "1: $primaryColorText  2: $secondaryColorText"
+                            } else {
+                                "1: $primaryColorText"
+                            }
+                            val labelText = "$vehicleClass: $colorText"
+                            
+                            val textLayoutResult = textMeasurer.measure(
+                                text = labelText,
+                                style = TextStyle(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            )
+                            
+                            // Position text above the bounding box with some padding
+                            val textX = rect.left
+                            val textY = maxOf(0f, rect.top - textLayoutResult.size.height - 8.dp.toPx())
+                            
+                            // Draw background for better text visibility
+                            drawRect(
+                                color = Color.Black.copy(alpha = 0.7f),
+                                topLeft = Offset(textX, textY),
+                                size = Size(
+                                    textLayoutResult.size.width.toFloat() + 8.dp.toPx(),
+                                    textLayoutResult.size.height.toFloat() + 4.dp.toPx()
+                                )
+                            )
+                            
+                            // Draw the text
+                            drawText(
+                                textLayoutResult = textLayoutResult,
+                                topLeft = Offset(textX + 4.dp.toPx(), textY + 2.dp.toPx())
                             )
                         }
                     }
@@ -875,8 +934,8 @@ fun DetectionOverlay(
                     imageRotation
                 )
                 
-                // Choose color based on vehicle type
-                val vehicleColor = when (vehicle.classId) {
+                // Use detected color or fallback to class-based color
+                val vehicleColor = vehicle.detectedColor?.toComposeColor() ?: when (vehicle.classId) {
                     2 -> Color.Blue    // Car - Blue
                     3 -> Color.Cyan    // Motorcycle - Cyan
                     5 -> Color.Yellow  // Bus - Yellow
@@ -902,20 +961,45 @@ fun DetectionOverlay(
                     size = rect.size,
                     style = Stroke(width = 4.dp.toPx())
                 )
-
-                // Draw the vehicle class label above the box
-                val labelText = "${vehicle.className} (${(vehicle.confidence * 100).toInt()}%)"
+                
+                // Draw color labels above the bounding box
+                val vehicleClass = vehicle.className.lowercase()
+                val primaryColorText = vehicle.detectedColor?.name?.lowercase() ?: "no_color"
+                val secondaryColorText = vehicle.secondaryColor?.name?.lowercase()
+                val colorText = if (secondaryColorText != null) {
+                    "1: $primaryColorText  2: $secondaryColorText"
+                } else {
+                    "1: $primaryColorText"
+                }
+                val labelText = "$vehicleClass: $colorText"
+                
                 val textLayoutResult = textMeasurer.measure(
-                    text = AnnotatedString(labelText),
+                    text = labelText,
                     style = TextStyle(
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        background = vehicleColor.copy(alpha = 0.8f)
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
                 )
+                
+                // Position text above the bounding box with some padding
+                val textX = rect.left
+                val textY = maxOf(0f, rect.top - textLayoutResult.size.height - 8.dp.toPx())
+                
+                // Draw background for better text visibility
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.7f),
+                    topLeft = Offset(textX, textY),
+                    size = Size(
+                        textLayoutResult.size.width.toFloat() + 8.dp.toPx(),
+                        textLayoutResult.size.height.toFloat() + 4.dp.toPx()
+                    )
+                )
+                
+                // Draw the text
                 drawText(
                     textLayoutResult = textLayoutResult,
-                    topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top - textLayoutResult.size.height - 4.dp.toPx())
+                    topLeft = Offset(textX + 4.dp.toPx(), textY + 2.dp.toPx())
                 )
             }
         }
@@ -982,10 +1066,20 @@ fun DetectionOverlay(
                         imageHeight,
                         imageRotation
                     )
+                    val vehicleClass = vehicle.className.lowercase()
+                    val primaryColorName = vehicle.detectedColor?.name?.lowercase() ?: "null"
+                    val secondaryColorName = vehicle.secondaryColor?.name?.lowercase()
+                    val colorText = if (secondaryColorName != null) {
+                        "1: $primaryColorName  2: $secondaryColorName"
+                    } else {
+                        "1: $primaryColorName"
+                    }
                     """
                     
                     VEHICLE DETECTION COORDINATES:
-                    Class: ${vehicle.className} (ID: ${vehicle.classId})
+                    ID: ${vehicle.id}
+                    Type: $vehicleClass (ID: ${vehicle.classId})
+                    Colors: $colorText
                     Original Rect: (${originalRect.left.format(1)}, ${originalRect.top.format(1)}) to (${originalRect.right.format(1)}, ${originalRect.bottom.format(1)})
                     Canvas Transformed: (${actualTransformedRect.left.format(1)}, ${actualTransformedRect.top.format(1)}) to (${actualTransformedRect.right.format(1)}, ${actualTransformedRect.bottom.format(1)})
                     Confidence: ${vehicle.confidence.format(3)}
@@ -1008,6 +1102,24 @@ fun DetectionOverlay(
                 // OCR Status Information
                 val ocrStatusText = "\n\nOCR STATUS: ${if (ocrEnabled) "✓ ENABLED" else "✗ DISABLED"}"
                 
+                // Vehicle Summary Information
+                val vehicleSummaryText = if (detectedVehicles.isNotEmpty()) {
+                    val vehicleList = detectedVehicles.map { vehicle ->
+                        val vehicleClass = vehicle.className.lowercase()
+                        val primaryColorName = vehicle.detectedColor?.name?.lowercase() ?: "no_color"
+                        val secondaryColorName = vehicle.secondaryColor?.name?.lowercase()
+                        val colorText = if (secondaryColorName != null) {
+                            "1: $primaryColorName  2: $secondaryColorName"
+                        } else {
+                            "1: $primaryColorName"
+                        }
+                        "${vehicle.id}: $vehicleClass: $colorText"
+                    }
+                    "\n\nVEHICLE SUMMARY:\n" + vehicleList.joinToString("\n")
+                } else {
+                    "\n\nNO VEHICLES DETECTED"
+                }
+                
                 val fullText = """
                     PERFORMANCE METRICS:
                     $lpMetricsText
@@ -1027,6 +1139,7 @@ fun DetectionOverlay(
                     $vehicleDetectionCoords
                     $gpuStatusText
                     $ocrStatusText
+                    $vehicleSummaryText
                 """.trimIndent()
                 
                 Text(

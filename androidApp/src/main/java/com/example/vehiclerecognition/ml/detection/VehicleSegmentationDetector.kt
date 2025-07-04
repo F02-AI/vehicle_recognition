@@ -8,6 +8,7 @@ import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.VehicleDetection
 import com.example.vehiclerecognition.data.models.VehicleSegmentationResult
 import com.example.vehiclerecognition.data.models.VehicleClass
+import com.example.vehiclerecognition.model.VehicleColor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -254,7 +255,7 @@ class VehicleSegmentationDetector @Inject constructor(
 
         // Step 4: Post-process outputs
         val post = System.currentTimeMillis()
-        val detections = postprocessOutputs(outputBuffers, outputShapes, bitmap.width, bitmap.height)
+        val detections = postprocessOutputs(outputBuffers, outputShapes, bitmap.width, bitmap.height, bitmap)
         postprocessingTimes.add(System.currentTimeMillis() - post)
         
         Log.d(TAG, "Vehicle segmentation post-processing found ${detections.size} detections")
@@ -268,7 +269,8 @@ class VehicleSegmentationDetector @Inject constructor(
         outputBuffers: Map<Int, ByteBuffer>,
         outputShapes: Map<Int, IntArray>,
         originalWidth: Int,
-        originalHeight: Int
+        originalHeight: Int,
+        originalBitmap: Bitmap
     ): List<VehicleDetection> {
         
         // Extract detection output (bounding boxes + class scores)
@@ -303,14 +305,17 @@ class VehicleSegmentationDetector @Inject constructor(
         
         // Add segmentation masks if available
         return if (masksArray != null && masksShape != null) {
-            addSegmentationMasks(nmsDetections, masksArray, masksShape, originalWidth, originalHeight)
+            addSegmentationMasks(nmsDetections, masksArray, masksShape, originalWidth, originalHeight, originalBitmap)
         } else {
             nmsDetections.map { (bbox, confidence, classId) ->
                 VehicleDetection(
+                    id = generateVehicleId(classId, bbox, System.currentTimeMillis(), 0),
                     boundingBox = bbox,
                     confidence = confidence,
                     classId = classId,
                     className = VehicleClass.getDisplayName(classId),
+                    detectedColor = null, // No color detection without mask
+                    secondaryColor = null, // No secondary color without mask
                     detectionTime = System.currentTimeMillis()
                 )
             }
@@ -485,7 +490,8 @@ class VehicleSegmentationDetector @Inject constructor(
         masksArray: FloatArray,
         masksShape: IntArray,
         originalWidth: Int,
-        originalHeight: Int
+        originalHeight: Int,
+        originalBitmap: Bitmap
     ): List<VehicleDetection> {
         
         Log.d(TAG, "Generating segmentation masks for ${detections.size} detections")
@@ -499,6 +505,9 @@ class VehicleSegmentationDetector @Inject constructor(
         val numPrototypes = masksShape[3] // 32
         
         return detections.mapIndexed { index, (bbox, confidence, classId, maskCoeffs) ->
+            
+            // Generate unique ID for this detection
+            val detectionId = generateVehicleId(classId, bbox, System.currentTimeMillis(), index)
             
             // Generate full mask at prototype resolution (160x160)
             val fullMask = generateMask(maskCoeffs, masksArray, prototypeHeight, prototypeWidth, numPrototypes)
@@ -516,6 +525,10 @@ class VehicleSegmentationDetector @Inject constructor(
             val maskStats = validateMask(croppedMask)
             Log.d(TAG, "Mask stats for ${VehicleClass.getDisplayName(classId)}: pixels=${maskStats.first}, max=${maskStats.second.format(3)}, avg=${maskStats.third.format(3)}")
             
+            // Detect vehicle colors from masked pixels
+            val (detectedColor, secondaryColor) = detectVehicleColors(originalBitmap, bbox, croppedMask)
+            Log.d(TAG, "Detected colors for vehicle $detectionId: primary=$detectedColor, secondary=$secondaryColor")
+            
             // Resize cropped mask to a good display resolution
             val targetMaskSize = 128 // Increased resolution for better quality
             val resizedMask = resizeMask(
@@ -526,13 +539,16 @@ class VehicleSegmentationDetector @Inject constructor(
                 targetMaskSize
             )
             
-            Log.d(TAG, "Generated mask for ${VehicleClass.getDisplayName(classId)}: cropped from ${croppedMask[0].size}x${croppedMask.size} to ${targetMaskSize}x${targetMaskSize}")
+            Log.d(TAG, "Generated mask for ${VehicleClass.getDisplayName(classId)} ID:$detectionId: cropped from ${croppedMask[0].size}x${croppedMask.size} to ${targetMaskSize}x${targetMaskSize}")
             
             VehicleDetection(
+                id = detectionId,
                 boundingBox = bbox,
                 confidence = confidence,
                 classId = classId,
                 className = VehicleClass.getDisplayName(classId),
+                detectedColor = detectedColor,
+                secondaryColor = secondaryColor,
                 segmentationMask = resizedMask,
                 maskWidth = targetMaskSize,
                 maskHeight = targetMaskSize,
@@ -744,42 +760,409 @@ class VehicleSegmentationDetector @Inject constructor(
         return Triple(activePixels, maxValue, avgValue)
     }
     
+    /**
+     * Generate unique ID for vehicle detection
+     */
+    private fun generateVehicleId(classId: Int, bbox: RectF, timestamp: Long, index: Int): String {
+        val className = VehicleClass.getDisplayName(classId).take(3).uppercase()
+        val bboxHash = ((bbox.left + bbox.top + bbox.right + bbox.bottom) * 1000).toInt().toString(16)
+        val timeHash = (timestamp % 10000).toString(16)
+        return "${className}_${timeHash}_${bboxHash}_$index"
+    }
+    
+    /**
+     * Detect dominant vehicle colors from segmentation mask using K-means clustering
+     * Returns a pair of (primary, secondary) colors
+     */
+    private fun detectVehicleColors(
+        originalBitmap: Bitmap,
+        bbox: RectF,
+        mask: Array<FloatArray>
+    ): Pair<VehicleColor?, VehicleColor?> {
+        try {
+            val validPixels = mutableListOf<Triple<Int, Int, Int>>() // RGB values
+            
+            val maskHeight = mask.size
+            val maskWidth = if (maskHeight > 0) mask[0].size else 0
+            
+            if (maskWidth == 0 || maskHeight == 0) return Pair(null, null)
+            
+            // Calculate scale factors
+            val scaleX = (bbox.right - bbox.left) / maskWidth
+            val scaleY = (bbox.bottom - bbox.top) / maskHeight
+            
+            // Strategic sampling: skip pixels for performance, focus on center area
+            val sampleStep = maxOf(1, minOf(maskWidth, maskHeight) / 32) // Adaptive sampling
+            val centerWeight = 0.7f // Give more weight to center pixels
+            
+            // First pass: count dark pixels to determine if black is predominant
+            var totalSamples = 0
+            var darkPixelCount = 0
+            
+            for (maskY in 0 until maskHeight step sampleStep) {
+                for (maskX in 0 until maskWidth step sampleStep) {
+                    val maskValue = mask[maskY][maskX]
+                    
+                    if (maskValue > 0.4f) {
+                        val imageX = (bbox.left + maskX * scaleX).toInt()
+                        val imageY = (bbox.top + maskY * scaleY).toInt()
+                        
+                        if (imageX in 0 until originalBitmap.width && imageY in 0 until originalBitmap.height) {
+                            try {
+                                val pixel = originalBitmap.getPixel(imageX, imageY)
+                                val r = (pixel shr 16) and 0xFF
+                                val g = (pixel shr 8) and 0xFF
+                                val b = pixel and 0xFF
+                                val brightness = (r + g + b) / 3
+                                
+                                if (brightness in 10..240) { // Valid brightness range
+                                    totalSamples++
+                                    if (brightness < 60) { // Dark pixel threshold
+                                        darkPixelCount++
+                                    }
+                                }
+                                
+                            } catch (e: Exception) {
+                                // Skip invalid pixels
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Determine if black/dark is predominant (>60% of valid pixels)
+            val blackIsPredominant = totalSamples > 0 && (darkPixelCount.toFloat() / totalSamples) > 0.6f
+            
+            Log.d(TAG, "Dark pixel analysis: $darkPixelCount/$totalSamples (${(darkPixelCount.toFloat() / totalSamples * 100).toInt()}%), blackIsPredominant=$blackIsPredominant")
+            
+            // Second pass: collect pixels for color analysis, excluding black unless predominant
+            for (maskY in 0 until maskHeight step sampleStep) {
+                for (maskX in 0 until maskWidth step sampleStep) {
+                    val maskValue = mask[maskY][maskX]
+                    
+                    // Only process pixels above threshold (part of the vehicle)
+                    if (maskValue > 0.4f) { // Slightly higher threshold for better quality
+                        val imageX = (bbox.left + maskX * scaleX).toInt()
+                        val imageY = (bbox.top + maskY * scaleY).toInt()
+                        
+                        if (imageX in 0 until originalBitmap.width && imageY in 0 until originalBitmap.height) {
+                            try {
+                                val pixel = originalBitmap.getPixel(imageX, imageY)
+                                val r = (pixel shr 16) and 0xFF
+                                val g = (pixel shr 8) and 0xFF
+                                val b = pixel and 0xFF
+                                
+                                // Filter out extreme values (reflections, shadows)
+                                val brightness = (r + g + b) / 3
+                                val brightnessPasses = brightness in 10..240
+                                
+                                // Exclude black pixels unless black is predominant
+                                val blackPixelCheck = if (blackIsPredominant) {
+                                    brightnessPasses // Include all valid brightness pixels if black is predominant
+                                } else {
+                                    brightnessPasses && brightness >= 60 // Exclude dark pixels if black is not predominant
+                                }
+                                
+                                if (blackPixelCheck) {
+                                    // Add multiple copies of center pixels for weighting
+                                    val centerDistanceX = kotlin.math.abs(maskX - maskWidth/2f) / (maskWidth/2f)
+                                    val centerDistanceY = kotlin.math.abs(maskY - maskHeight/2f) / (maskHeight/2f)
+                                    val centerDistance = (centerDistanceX + centerDistanceY) / 2f
+                                    val weight = if (centerDistance < centerWeight) 2 else 1
+                                    
+                                    repeat(weight) {
+                                        validPixels.add(Triple(r, g, b))
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Skip invalid pixels
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (validPixels.size < 20) return Pair(null, null) // Need sufficient samples
+            
+            // Apply K-means clustering to find dominant colors
+            val dominantColors = kMeansColors(validPixels, k = 3) // Find top 3 colors
+            
+            if (dominantColors.isEmpty()) return Pair(null, null)
+            
+            // Map the top 2 K-means colors to VehicleColor enums
+            val primaryKmeansColor = dominantColors.first()
+            val primaryColor = mapRgbToVehicleColor(primaryKmeansColor.first, primaryKmeansColor.second, primaryKmeansColor.third)
+            
+            var secondaryKmeansUsed: Triple<Int, Int, Int>? = null
+            val secondaryColor = if (dominantColors.size > 1) {
+                // Try each subsequent K-means color until we find one that maps to a different VehicleColor
+                var secondaryMappedColor: VehicleColor? = null
+                for (i in 1 until dominantColors.size) {
+                    val kmeansColor = dominantColors[i]
+                    val mappedColor = mapRgbToVehicleColor(kmeansColor.first, kmeansColor.second, kmeansColor.third)
+                    if (mappedColor != primaryColor) {
+                        secondaryMappedColor = mappedColor
+                        secondaryKmeansUsed = kmeansColor
+                        break
+                    }
+                }
+                secondaryMappedColor
+            } else {
+                null
+            }
+            
+            Log.d(TAG, "K-means color detection: samples=${validPixels.size}, clusters=${dominantColors.size}, " +
+                      "primary K-means RGB=(${primaryKmeansColor.first},${primaryKmeansColor.second},${primaryKmeansColor.third}) -> $primaryColor, " +
+                      "secondary K-means RGB=${secondaryKmeansUsed?.let { "(${it.first},${it.second},${it.third})" } ?: "none"} -> $secondaryColor, " +
+                      "blackFiltered=${!blackIsPredominant}")
+            
+            return primaryColor to secondaryColor
+            
+        } catch (e: Exception) {
+            Log.w(TAG, "Error detecting vehicle color: ${e.message}")
+            return Pair(null, null)
+        }
+    }
+    
+    /**
+     * Map RGB color to the closest VehicleColor enum using perceptual distance
+     */
+    private fun mapRgbToVehicleColor(r: Int, g: Int, b: Int): VehicleColor {
+        val predefinedColors = mapOf(
+            VehicleColor.RED to Triple(220, 20, 20),      // Bright red
+            VehicleColor.BLUE to Triple(30, 30, 220),     // Bright blue  
+            VehicleColor.GREEN to Triple(20, 180, 20),    // Bright green
+            VehicleColor.WHITE to Triple(240, 240, 240),  // Off-white
+            VehicleColor.BLACK to Triple(30, 30, 30),     // Dark gray/black
+            VehicleColor.GRAY to Triple(128, 128, 128),   // Medium gray
+            VehicleColor.YELLOW to Triple(255, 255, 0)    // Bright yellow
+        )
+        
+        var closestColor = VehicleColor.BLACK
+        var minDistance = Double.MAX_VALUE
+        
+        for ((vehicleColor, refRgb) in predefinedColors) {
+            val distance = calculateColorDistance(r, g, b, refRgb.first, refRgb.second, refRgb.third)
+            if (distance < minDistance) {
+                minDistance = distance
+                closestColor = vehicleColor
+            }
+        }
+        
+        return closestColor
+    }
+    
+    /**
+     * Calculate perceptual color distance using LAB color space approximation
+     */
+    private fun calculateColorDistance(r1: Int, g1: Int, b1: Int, r2: Int, g2: Int, b2: Int): Double {
+        // Simple weighted RGB distance (approximates perceptual difference)
+        // Weights based on human eye sensitivity: red < green > blue
+        val deltaR = (r1 - r2).toDouble()
+        val deltaG = (g1 - g2).toDouble() 
+        val deltaB = (b1 - b2).toDouble()
+        
+        // Perceptual weighting
+        return kotlin.math.sqrt(
+            2.0 * deltaR * deltaR +
+            4.0 * deltaG * deltaG +
+            1.0 * deltaB * deltaB
+        )
+    }
+    
+    /**
+     * K-means clustering to find dominant colors
+     */
+    private fun kMeansColors(pixels: List<Triple<Int, Int, Int>>, k: Int = 3, maxIterations: Int = 10): List<Triple<Int, Int, Int>> {
+        if (pixels.size < k) return pixels.map { it }.distinct()
+        
+        // Convert RGB to HSV for better perceptual clustering
+        val hsvPixels = pixels.map { (r, g, b) -> rgbToHsv(r, g, b) }
+        
+        // Initialize centroids randomly
+        val centroids = mutableListOf<Triple<Float, Float, Float>>()
+        val indices = (0 until hsvPixels.size).shuffled().take(k)
+        indices.forEach { centroids.add(hsvPixels[it]) }
+        
+        repeat(maxIterations) {
+            // Assign pixels to nearest centroid
+            val clusters = Array(k) { mutableListOf<Triple<Float, Float, Float>>() }
+            
+            hsvPixels.forEach { pixel ->
+                var minDistance = Float.MAX_VALUE
+                var closestCluster = 0
+                
+                centroids.forEachIndexed { index, centroid ->
+                    val distance = hsvDistance(pixel, centroid)
+                    if (distance < minDistance) {
+                        minDistance = distance
+                        closestCluster = index
+                    }
+                }
+                
+                clusters[closestCluster].add(pixel)
+            }
+            
+            // Update centroids
+            val newCentroids = mutableListOf<Triple<Float, Float, Float>>()
+            clusters.forEach { cluster ->
+                if (cluster.isNotEmpty()) {
+                    val avgH = cluster.map { it.first }.average().toFloat()
+                    val avgS = cluster.map { it.second }.average().toFloat()
+                    val avgV = cluster.map { it.third }.average().toFloat()
+                    newCentroids.add(Triple(avgH, avgS, avgV))
+                } else {
+                    // Keep old centroid if cluster is empty
+                    newCentroids.add(centroids[newCentroids.size])
+                }
+            }
+            
+            centroids.clear()
+            centroids.addAll(newCentroids)
+        }
+        
+        // Convert back to RGB and sort by cluster size
+        val clusterSizes = mutableListOf<Pair<Triple<Int, Int, Int>, Int>>()
+        centroids.forEachIndexed { index, centroid ->
+            val rgb = hsvToRgb(centroid.first, centroid.second, centroid.third)
+            // Count pixels closest to this centroid
+            val clusterSize = hsvPixels.count { pixel ->
+                var minDistance = Float.MAX_VALUE
+                var closestIndex = -1
+                centroids.forEachIndexed { i, c ->
+                    val dist = hsvDistance(pixel, c)
+                    if (dist < minDistance) {
+                        minDistance = dist
+                        closestIndex = i
+                    }
+                }
+                closestIndex == index
+            }
+            clusterSizes.add(rgb to clusterSize)
+        }
+        
+        return clusterSizes.sortedByDescending { it.second }.map { it.first }
+    }
+    
+    /**
+     * Convert RGB to HSV color space
+     */
+    private fun rgbToHsv(r: Int, g: Int, b: Int): Triple<Float, Float, Float> {
+        val rf = r / 255f
+        val gf = g / 255f
+        val bf = b / 255f
+        
+        val max = maxOf(rf, gf, bf)
+        val min = minOf(rf, gf, bf)
+        val delta = max - min
+        
+        val h = when {
+            delta == 0f -> 0f
+            max == rf -> 60f * (((gf - bf) / delta) % 6f)
+            max == gf -> 60f * ((bf - rf) / delta + 2f)
+            else -> 60f * ((rf - gf) / delta + 4f)
+        }
+        
+        val s = if (max == 0f) 0f else delta / max
+        val v = max
+        
+        return Triple(h, s, v)
+    }
+    
+    /**
+     * Convert HSV to RGB color space
+     */
+    private fun hsvToRgb(h: Float, s: Float, v: Float): Triple<Int, Int, Int> {
+        val c = v * s
+        val x = c * (1f - kotlin.math.abs((h / 60f) % 2f - 1f))
+        val m = v - c
+        
+        val (r1, g1, b1) = when ((h / 60f).toInt()) {
+            0 -> Triple(c, x, 0f)
+            1 -> Triple(x, c, 0f)
+            2 -> Triple(0f, c, x)
+            3 -> Triple(0f, x, c)
+            4 -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
+        
+        val r = ((r1 + m) * 255f).toInt().coerceIn(0, 255)
+        val g = ((g1 + m) * 255f).toInt().coerceIn(0, 255)
+        val b = ((b1 + m) * 255f).toInt().coerceIn(0, 255)
+        
+        return Triple(r, g, b)
+    }
+    
+    /**
+     * Calculate distance between two HSV colors
+     */
+    private fun hsvDistance(hsv1: Triple<Float, Float, Float>, hsv2: Triple<Float, Float, Float>): Float {
+        val (h1, s1, v1) = hsv1
+        val (h2, s2, v2) = hsv2
+        
+        // Handle hue wraparound (circular distance)
+        val deltaH = minOf(kotlin.math.abs(h1 - h2), 360f - kotlin.math.abs(h1 - h2))
+        val deltaS = kotlin.math.abs(s1 - s2)
+        val deltaV = kotlin.math.abs(v1 - v2)
+        
+        // Weighted distance (hue is most important for color perception)
+        val hueWeight = (deltaH / 360f * 2f)
+        val satWeight = (deltaS * 1f)
+        val valWeight = (deltaV * 0.5f)
+        
+        return kotlin.math.sqrt(
+            hueWeight * hueWeight +
+            satWeight * satWeight +
+            valWeight * valWeight
+        )
+    }
+    
     private fun runSimulatedDetection(bitmap: Bitmap): List<VehicleDetection> {
         // Simulate realistic vehicle detections for testing
         val detections = mutableListOf<VehicleDetection>()
         
         // Add a few simulated vehicles
         if (bitmap.width > 200 && bitmap.height > 200) {
+            val timestamp = System.currentTimeMillis()
+            
             // Car detection
+            val carBbox = RectF(
+                bitmap.width * 0.2f,
+                bitmap.height * 0.3f,
+                bitmap.width * 0.6f,
+                bitmap.height * 0.7f
+            )
             detections.add(
                 VehicleDetection(
-                    boundingBox = RectF(
-                        bitmap.width * 0.2f,
-                        bitmap.height * 0.3f,
-                        bitmap.width * 0.6f,
-                        bitmap.height * 0.7f
-                    ),
+                    id = generateVehicleId(2, carBbox, timestamp, 0),
+                    boundingBox = carBbox,
                     confidence = 0.85f,
                     classId = 2, // Car
                     className = "Car",
-                    detectionTime = System.currentTimeMillis()
+                    detectedColor = VehicleColor.BLUE, // Simulated blue color
+                    secondaryColor = VehicleColor.WHITE, // Simulated secondary color
+                    detectionTime = timestamp
                 )
             )
             
             // Possible truck detection
             if (Math.random() > 0.5) {
+                val truckBbox = RectF(
+                    bitmap.width * 0.1f,
+                    bitmap.height * 0.1f,
+                    bitmap.width * 0.4f,
+                    bitmap.height * 0.5f
+                )
                 detections.add(
                     VehicleDetection(
-                        boundingBox = RectF(
-                            bitmap.width * 0.1f,
-                            bitmap.height * 0.1f,
-                            bitmap.width * 0.4f,
-                            bitmap.height * 0.5f
-                        ),
+                        id = generateVehicleId(7, truckBbox, timestamp, 1),
+                        boundingBox = truckBbox,
                         confidence = 0.72f,
                         classId = 7, // Truck
                         className = "Truck",
-                        detectionTime = System.currentTimeMillis()
+                        detectedColor = VehicleColor.RED, // Simulated red color
+                        secondaryColor = VehicleColor.BLACK, // Simulated secondary color
+                        detectionTime = timestamp
                     )
                 )
             }

@@ -1,15 +1,19 @@
 package com.example.vehiclerecognition.data.models
 
 import android.graphics.RectF
+import com.example.vehiclerecognition.model.VehicleColor
 
 /**
  * Data class representing a detected vehicle with bounding box and segmentation
  */
 data class VehicleDetection(
+    val id: String, // Unique identifier for this detection
     val boundingBox: RectF,
     val confidence: Float,
     val classId: Int,
     val className: String,
+    val detectedColor: VehicleColor? = null, // Primary detected vehicle color from predefined set
+    val secondaryColor: VehicleColor? = null, // Secondary detected vehicle color (second closest match)
     val segmentationMask: Array<FloatArray>? = null,
     val maskWidth: Int = 0,
     val maskHeight: Int = 0,
@@ -22,10 +26,13 @@ data class VehicleDetection(
 
         other as VehicleDetection
 
+        if (id != other.id) return false
         if (boundingBox != other.boundingBox) return false
         if (confidence != other.confidence) return false
         if (classId != other.classId) return false
         if (className != other.className) return false
+        if (detectedColor != other.detectedColor) return false
+        if (secondaryColor != other.secondaryColor) return false
         if (maskWidth != other.maskWidth) return false
         if (maskHeight != other.maskHeight) return false
         if (detectionTime != other.detectionTime) return false
@@ -38,10 +45,13 @@ data class VehicleDetection(
     }
 
     override fun hashCode(): Int {
-        var result = boundingBox.hashCode()
+        var result = id.hashCode()
+        result = 31 * result + boundingBox.hashCode()
         result = 31 * result + confidence.hashCode()
         result = 31 * result + classId
         result = 31 * result + className.hashCode()
+        result = 31 * result + (detectedColor?.hashCode() ?: 0)
+        result = 31 * result + (secondaryColor?.hashCode() ?: 0)
         result = 31 * result + maskWidth
         result = 31 * result + maskHeight
         result = 31 * result + (maskCoeffs?.contentHashCode() ?: 0)
