@@ -32,6 +32,7 @@ import java.util.Collections
  * Extension function to format float values for logging
  */
 private fun Float.format(digits: Int) = "%.${digits}f".format(this)
+private fun Double.format(digits: Int) = "%.${digits}f".format(this)
 
 /**
  * Data class to hold four values (like Triple but with four elements)
@@ -854,13 +855,13 @@ class VehicleSegmentationDetector @Inject constructor(
                                 
                                 // Filter out extreme values (reflections, shadows)
                                 val brightness = (r + g + b) / 3
-                                val brightnessPasses = brightness in 10..240
+                                val brightnessPasses = brightness in 15..230 // Slightly tighter range
                                 
-                                // Exclude black pixels unless black is predominant
+                                // More lenient dark pixel filtering - only exclude very dark pixels
                                 val blackPixelCheck = if (blackIsPredominant) {
                                     brightnessPasses // Include all valid brightness pixels if black is predominant
                                 } else {
-                                    brightnessPasses && brightness >= 60 // Exclude dark pixels if black is not predominant
+                                    brightnessPasses && brightness >= 40 // Lowered from 60 to 40 to include darker blues/greens
                                 }
                                 
                                 if (blackPixelCheck) {
@@ -884,10 +885,24 @@ class VehicleSegmentationDetector @Inject constructor(
             
             if (validPixels.size < 20) return Pair(null, null) // Need sufficient samples
             
+            // Debug: Show sample of collected RGB values
+            Log.d(TAG, "Collected ${validPixels.size} valid pixels. Sample of first 10:")
+            validPixels.take(10).forEachIndexed { index, (r, g, b) ->
+                val brightness = (r + g + b) / 3
+                Log.d(TAG, "  [$index] RGB($r,$g,$b) brightness=$brightness")
+            }
+            
             // Apply K-means clustering to find dominant colors
             val dominantColors = kMeansColors(validPixels, k = 3) // Find top 3 colors
             
             if (dominantColors.isEmpty()) return Pair(null, null)
+            
+            // Debug: Show all K-means cluster results
+            Log.d(TAG, "K-means found ${dominantColors.size} clusters:")
+            dominantColors.forEachIndexed { index, (r, g, b) ->
+                val brightness = (r + g + b) / 3
+                Log.d(TAG, "  Cluster $index: RGB($r,$g,$b) brightness=$brightness")
+            }
             
             // Map the top 2 K-means colors to VehicleColor enums
             val primaryKmeansColor = dominantColors.first()
@@ -928,46 +943,104 @@ class VehicleSegmentationDetector @Inject constructor(
      * Map RGB color to the closest VehicleColor enum using perceptual distance
      */
     private fun mapRgbToVehicleColor(r: Int, g: Int, b: Int): VehicleColor {
-        val predefinedColors = mapOf(
-            VehicleColor.RED to Triple(220, 20, 20),      // Bright red
-            VehicleColor.BLUE to Triple(30, 30, 220),     // Bright blue  
-            VehicleColor.GREEN to Triple(20, 180, 20),    // Bright green
-            VehicleColor.WHITE to Triple(240, 240, 240),  // Off-white
-            VehicleColor.BLACK to Triple(30, 30, 30),     // Dark gray/black
-            VehicleColor.GRAY to Triple(128, 128, 128),   // Medium gray
-            VehicleColor.YELLOW to Triple(255, 255, 0)    // Bright yellow
+        // More realistic vehicle color references based on common car colors
+        // Using multiple reference points per color to better capture variations
+        val predefinedColors = listOf(
+            // Red variations
+            VehicleColor.RED to Triple(140, 50, 50),      // Dark red
+            VehicleColor.RED to Triple(180, 60, 60),      // Medium red
+            VehicleColor.RED to Triple(120, 30, 30),      // Very dark red
+            
+            // Blue variations  
+            VehicleColor.BLUE to Triple(60, 80, 140),     // Standard blue
+            VehicleColor.BLUE to Triple(40, 60, 120),     // Dark blue
+            VehicleColor.BLUE to Triple(80, 100, 160),    // Lighter blue
+            
+            // Green variations
+            VehicleColor.GREEN to Triple(60, 100, 60),    // Standard green
+            VehicleColor.GREEN to Triple(40, 80, 40),     // Dark green
+            VehicleColor.GREEN to Triple(80, 120, 80),    // Lighter green
+            
+            // White/Silver variations
+            VehicleColor.WHITE to Triple(220, 220, 220),  // Pure white
+            VehicleColor.WHITE to Triple(200, 200, 200),  // Off-white
+            VehicleColor.WHITE to Triple(240, 240, 240),  // Bright white
+            
+            // Black variations
+            VehicleColor.BLACK to Triple(40, 40, 40),     // Standard black
+            VehicleColor.BLACK to Triple(25, 25, 25),     // Very dark
+            VehicleColor.BLACK to Triple(60, 60, 60),     // Dark gray-black
+            
+            // Gray variations
+            VehicleColor.GRAY to Triple(110, 110, 110),   // Medium gray
+            VehicleColor.GRAY to Triple(90, 90, 90),      // Dark gray
+            VehicleColor.GRAY to Triple(140, 140, 140),   // Light gray
+            VehicleColor.GRAY to Triple(160, 160, 160),   // Silver
+            
+            // Yellow/Beige variations
+            VehicleColor.YELLOW to Triple(200, 180, 60),  // Golden yellow
+            VehicleColor.YELLOW to Triple(180, 160, 80),  // Beige
+            VehicleColor.YELLOW to Triple(220, 200, 40)   // Bright yellow
         )
         
-        var closestColor = VehicleColor.BLACK
+        var closestColor = VehicleColor.GRAY // Default to gray instead of black
         var minDistance = Double.MAX_VALUE
+        val colorDistances = mutableMapOf<VehicleColor, Double>()
         
+        // Find the closest distance for each color category
         for ((vehicleColor, refRgb) in predefinedColors) {
             val distance = calculateColorDistance(r, g, b, refRgb.first, refRgb.second, refRgb.third)
+            val currentBest = colorDistances[vehicleColor]
+            if (currentBest == null || distance < currentBest) {
+                colorDistances[vehicleColor] = distance
+            }
             if (distance < minDistance) {
                 minDistance = distance
                 closestColor = vehicleColor
             }
         }
         
+        // Debug logging to understand what's happening
+        Log.d(TAG, "Color mapping for RGB($r,$g,$b): closest=$closestColor (distance=${minDistance.toInt()})")
+        colorDistances.toList().sortedBy { it.second }.take(3).forEach { (color, dist) ->
+            Log.d(TAG, "  $color: distance=${dist.toInt()}")
+        }
+        
+        // If the closest color is too far away (distance > 2.0), default to gray
+        if (minDistance > 2.0) {
+            Log.d(TAG, "All colors too far (distance=${minDistance.format(2)}), defaulting to GRAY")
+            return VehicleColor.GRAY
+        }
+        
         return closestColor
     }
     
     /**
-     * Calculate perceptual color distance using LAB color space approximation
+     * Calculate perceptual color distance using improved color space
      */
     private fun calculateColorDistance(r1: Int, g1: Int, b1: Int, r2: Int, g2: Int, b2: Int): Double {
-        // Simple weighted RGB distance (approximates perceptual difference)
-        // Weights based on human eye sensitivity: red < green > blue
-        val deltaR = (r1 - r2).toDouble()
-        val deltaG = (g1 - g2).toDouble() 
-        val deltaB = (b1 - b2).toDouble()
+        // Convert both colors to HSV for better perceptual distance
+        val hsv1 = rgbToHsv(r1, g1, b1)
+        val hsv2 = rgbToHsv(r2, g2, b2)
         
-        // Perceptual weighting
+        val (h1, s1, v1) = hsv1
+        val (h2, s2, v2) = hsv2
+        
+        // Handle hue wraparound (circular distance)
+        val deltaH = minOf(kotlin.math.abs(h1 - h2), 360f - kotlin.math.abs(h1 - h2))
+        val deltaS = kotlin.math.abs(s1 - s2)
+        val deltaV = kotlin.math.abs(v1 - v2)
+        
+        // Weighted distance with emphasis on saturation and value for color distinction
+        val hueWeight = if (s1 > 0.1f && s2 > 0.1f) deltaH / 360f * 3f else 0f // Only use hue if colors are saturated
+        val satWeight = deltaS * 2f // Saturation is important for color distinction
+        val valWeight = deltaV * 1f // Value/brightness
+        
         return kotlin.math.sqrt(
-            2.0 * deltaR * deltaR +
-            4.0 * deltaG * deltaG +
-            1.0 * deltaB * deltaB
-        )
+            hueWeight * hueWeight +
+            satWeight * satWeight +
+            valWeight * valWeight
+        ).toDouble()
     }
     
     /**
