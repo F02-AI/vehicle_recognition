@@ -13,6 +13,8 @@ import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.data.models.PlateDetection
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
+import com.example.vehiclerecognition.data.models.VehicleDetection
+import com.example.vehiclerecognition.ml.processors.VehicleSegmentationProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +41,8 @@ class CameraViewModel @Inject constructor(
     private val vehicleMatcher: VehicleMatcher,
     private val settingsRepository: SettingsRepository,
     private val soundAlertPlayer: SoundAlertPlayer,
-    private val licensePlateRepository: LicensePlateRepository
+    private val licensePlateRepository: LicensePlateRepository,
+    private val vehicleSegmentationProcessor: VehicleSegmentationProcessor
 ) : ViewModel() {
 
     // Stores the desired user-facing zoom RATIO (e.g., 1.0f for 1x, 2.0f for 2x)
@@ -58,14 +61,26 @@ class CameraViewModel @Inject constructor(
     private val _detectedPlates = MutableStateFlow<List<PlateDetection>>(emptyList())
     val detectedPlates: StateFlow<List<PlateDetection>> = _detectedPlates.asStateFlow()
 
+    private val _detectedVehicles = MutableStateFlow<List<VehicleDetection>>(emptyList())
+    val detectedVehicles: StateFlow<List<VehicleDetection>> = _detectedVehicles.asStateFlow()
+
     private val _performanceMetrics = MutableStateFlow<Map<String, Long>>(emptyMap())
     val performanceMetrics: StateFlow<Map<String, Long>> = _performanceMetrics.asStateFlow()
+
+    private val _vehiclePerformanceMetrics = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val vehiclePerformanceMetrics: StateFlow<Map<String, Long>> = _vehiclePerformanceMetrics.asStateFlow()
 
     private val _totalDetections = MutableStateFlow(0)
     val totalDetections: StateFlow<Int> = _totalDetections.asStateFlow()
 
+    private val _totalVehicleDetections = MutableStateFlow(0)
+    val totalVehicleDetections: StateFlow<Int> = _totalVehicleDetections.asStateFlow()
+
     private val _rawOutputLog = MutableStateFlow("")
     val rawOutputLog: StateFlow<String> = _rawOutputLog.asStateFlow()
+
+    private val _vehicleRawOutputLog = MutableStateFlow("")
+    val vehicleRawOutputLog: StateFlow<String> = _vehicleRawOutputLog.asStateFlow()
 
     private val _frameWidth = MutableStateFlow(0)
     val frameWidth: StateFlow<Int> = _frameWidth.asStateFlow()
@@ -166,7 +181,7 @@ class CameraViewModel @Inject constructor(
                     delay(100)
                     
                     try {
-                        val success = if (isFirstCollection) {
+                        val licensePlateSuccess = if (isFirstCollection) {
                             // Use initialize for first time
                             licensePlateRepository.initialize()
                         } else {
@@ -174,10 +189,17 @@ class CameraViewModel @Inject constructor(
                             licensePlateRepository.reinitializeWithSettings(settings)
                         }
                         
-                        if (success) {
-                            Log.d("CameraViewModel", "Detector ${if (isFirstCollection) "initialized" else "reinitialized"} successfully with GPU setting: ${settings.enableGpuAcceleration}")
+                        // Initialize vehicle segmentation processor with same settings
+                        val vehicleSegmentationSuccess = if (isFirstCollection) {
+                            vehicleSegmentationProcessor.initialize(settings)
                         } else {
-                            Log.w("CameraViewModel", "Failed to ${if (isFirstCollection) "initialize" else "reinitialize"} detector with GPU setting: ${settings.enableGpuAcceleration}")
+                            vehicleSegmentationProcessor.reinitializeDetector(settings)
+                        }
+                        
+                        if (licensePlateSuccess && vehicleSegmentationSuccess) {
+                            Log.d("CameraViewModel", "Both detectors ${if (isFirstCollection) "initialized" else "reinitialized"} successfully with GPU setting: ${settings.enableGpuAcceleration}")
+                        } else {
+                            Log.w("CameraViewModel", "Failed to ${if (isFirstCollection) "initialize" else "reinitialize"} detectors - LP: $licensePlateSuccess, VS: $vehicleSegmentationSuccess")
                         }
                     } catch (e: Exception) {
                         Log.e("CameraViewModel", "Error during detector ${if (isFirstCollection) "initialization" else "reinitialization"}", e)
@@ -269,21 +291,24 @@ class CameraViewModel @Inject constructor(
                 val currentSettings = _currentSettings.value
                 Log.d("CameraViewModel", "Current settings: confidence=${currentSettings.minConfidenceThreshold}, gpu=${currentSettings.enableGpuAcceleration}")
                 
-                val result = licensePlateRepository.processFrame(bitmap, currentSettings)
+                // Process both license plate and vehicle detection in parallel
+                val lpResult = licensePlateRepository.processFrame(bitmap, currentSettings)
+                val vehicleResult = vehicleSegmentationProcessor.processFrame(bitmap, currentSettings)
 
-                Log.d("CameraViewModel", "Detection result: ${result.detections.size} detections found")
+                Log.d("CameraViewModel", "LP Detection result: ${lpResult.detections.size} plates found")
+                Log.d("CameraViewModel", "Vehicle Detection result: ${vehicleResult.detections.size} vehicles found")
                 
                 // Update GPU status for debug display
                 _gpuStatus.value = licensePlateRepository.getGpuStatus()
                 
-                // Update detections if any found
-                if (result.detections.isNotEmpty()) {
+                // Update license plate detections if any found
+                if (lpResult.detections.isNotEmpty()) {
                     // Add timestamp to each detection for expiration tracking
-                    val timestampedDetections = result.detections.map { detection ->
+                    val timestampedDetections = lpResult.detections.map { detection ->
                         detection.copy(detectionTime = currentTime)
                     }
                     _detectedPlates.value = timestampedDetections
-                    _totalDetections.value = _totalDetections.value + result.detections.size
+                    _totalDetections.value = _totalDetections.value + lpResult.detections.size
                     
                     // Start automatic expiration job for these detections
                     detectionHideJob?.cancel()
@@ -292,14 +317,30 @@ class CameraViewModel @Inject constructor(
                         clearExpiredDetections(System.currentTimeMillis())
                     }
                     
-                    result.detections.forEachIndexed { index, detection ->
-                        Log.d("CameraViewModel", "Detection $index: bbox=${detection.boundingBox}, conf=${detection.confidence}")
+                    lpResult.detections.forEachIndexed { index, detection ->
+                        Log.d("CameraViewModel", "LP Detection $index: bbox=${detection.boundingBox}, conf=${detection.confidence}")
+                    }
+                }
+                
+                // Update vehicle detections if any found
+                if (vehicleResult.detections.isNotEmpty()) {
+                    // Add timestamp to each detection for expiration tracking
+                    val timestampedVehicleDetections = vehicleResult.detections.map { detection ->
+                        detection.copy(detectionTime = currentTime)
+                    }
+                    _detectedVehicles.value = timestampedVehicleDetections
+                    _totalVehicleDetections.value = _totalVehicleDetections.value + vehicleResult.detections.size
+                    
+                    vehicleResult.detections.forEachIndexed { index, detection ->
+                        Log.d("CameraViewModel", "Vehicle Detection $index: ${detection.className} bbox=${detection.boundingBox}, conf=${detection.confidence}")
                     }
                 }
 
                 // Always show performance metrics in debug mode
-                _performanceMetrics.value = result.performance
-                _rawOutputLog.value = result.rawOutputLog
+                _performanceMetrics.value = lpResult.performance
+                _rawOutputLog.value = lpResult.rawOutputLog
+                _vehiclePerformanceMetrics.value = vehicleResult.performance
+                _vehicleRawOutputLog.value = vehicleResult.rawOutputLog
                 
             } catch (e: Exception) {
                 Log.e("CameraViewModel", "Error processing camera frame", e)
@@ -329,6 +370,7 @@ class CameraViewModel @Inject constructor(
      * Clears detections that are older than 1 second
      */
     private fun clearExpiredDetections(currentTime: Long) {
+        // Clear expired license plate detections
         val currentDetections = _detectedPlates.value
         if (currentDetections.isNotEmpty()) {
             val validDetections = currentDetections.filter { detection ->
@@ -338,7 +380,21 @@ class CameraViewModel @Inject constructor(
             
             if (validDetections.size != currentDetections.size) {
                 _detectedPlates.value = validDetections
-                Log.d("CameraViewModel", "Cleared ${currentDetections.size - validDetections.size} expired detections")
+                Log.d("CameraViewModel", "Cleared ${currentDetections.size - validDetections.size} expired plate detections")
+            }
+        }
+        
+        // Clear expired vehicle detections
+        val currentVehicleDetections = _detectedVehicles.value
+        if (currentVehicleDetections.isNotEmpty()) {
+            val validVehicleDetections = currentVehicleDetections.filter { detection ->
+                val age = currentTime - (detection.detectionTime ?: 0L)
+                age < 1000 // Keep detections younger than 1 second
+            }
+            
+            if (validVehicleDetections.size != currentVehicleDetections.size) {
+                _detectedVehicles.value = validVehicleDetections
+                Log.d("CameraViewModel", "Cleared ${currentVehicleDetections.size - validVehicleDetections.size} expired vehicle detections")
             }
         }
     }
@@ -437,6 +493,7 @@ class CameraViewModel @Inject constructor(
         latestFrameToProcess = null
         
         licensePlateRepository.release() // Release license plate processor resources
+        vehicleSegmentationProcessor.release() // Release vehicle segmentation processor resources
         Log.d("CameraViewModel", "CameraViewModel: onCleared")
     }
 } 

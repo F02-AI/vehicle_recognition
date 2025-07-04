@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.vehiclerecognition.data.models.PlateDetection
+import com.example.vehiclerecognition.data.models.VehicleDetection
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.ml.detection.LicensePlateDetector
 import java.io.ByteArrayOutputStream
@@ -378,9 +379,13 @@ fun ActualCameraView(
             
             // Still show the detection overlay
             val detectedPlates by cameraViewModel.detectedPlates.collectAsState()
+            val detectedVehicles by cameraViewModel.detectedVehicles.collectAsState()
             val performanceMetrics by cameraViewModel.performanceMetrics.collectAsState()
+            val vehiclePerformanceMetrics by cameraViewModel.vehiclePerformanceMetrics.collectAsState()
             val totalDetections by cameraViewModel.totalDetections.collectAsState()
+            val totalVehicleDetections by cameraViewModel.totalVehicleDetections.collectAsState()
             val rawOutputLog by cameraViewModel.rawOutputLog.collectAsState()
+            val vehicleRawOutputLog by cameraViewModel.vehicleRawOutputLog.collectAsState()
             val frameWidth by cameraViewModel.frameWidth.collectAsState()
             val frameHeight by cameraViewModel.frameHeight.collectAsState()
             val frameRotation by cameraViewModel.frameRotation.collectAsState()
@@ -420,19 +425,48 @@ fun ActualCameraView(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        text = "Detections: ${detectedPlates.size}",
+                        text = "LP Detections: ${detectedPlates.size}",
                         color = Color.White,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        text = "Total: $totalDetections",
+                        text = "Vehicle Detections: ${detectedVehicles.size}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        text = "Total LP: $totalDetections",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        text = "Total Vehicles: $totalVehicleDetections",
                         color = Color.White,
                         style = MaterialTheme.typography.bodySmall
                     )
                     if (performanceMetrics.isNotEmpty()) {
+                        Text(
+                            text = "LP Performance:",
+                            color = Color.Green,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                         performanceMetrics.forEach { (key, value) ->
                             Text(
-                                text = "$key: ${value}ms",
+                                text = "  $key: ${value}ms",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    if (vehiclePerformanceMetrics.isNotEmpty()) {
+                        Text(
+                            text = "Vehicle Performance:",
+                            color = Color.Blue,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        vehiclePerformanceMetrics.forEach { (key, value) ->
+                            Text(
+                                text = "  $key: ${value}ms",
                                 color = Color.White,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -440,8 +474,15 @@ fun ActualCameraView(
                     }
                     if (rawOutputLog.isNotEmpty()) {
                         Text(
-                            text = "Output: $rawOutputLog",
+                            text = "LP Output: $rawOutputLog",
                             color = if (rawOutputLog == "Error") Color.Red else Color.Yellow,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (vehicleRawOutputLog.isNotEmpty()) {
+                        Text(
+                            text = "Vehicle Output: $vehicleRawOutputLog",
+                            color = if (vehicleRawOutputLog == "Error") Color.Red else Color.Cyan,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -476,6 +517,8 @@ fun ActualCameraView(
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         Log.d("DebugVideoPlayer", "Canvas size: ${size.width}x${size.height}")
+                        
+                        // Draw license plate detections
                         detectedPlates.forEach { plate ->
                             // Use the actual video display dimensions for coordinate transformation
                             val rect = plate.boundingBox.toComposeRect(
@@ -486,17 +529,41 @@ fun ActualCameraView(
                                 frameRotation
                             )
                             
-                            // Draw the bounding box
+                            // Draw the bounding box in green for license plates
                             drawRect(
                                 color = Color.Green,
                                 topLeft = rect.topLeft,
                                 size = rect.size,
                                 style = Stroke(width = 3.dp.toPx())
                             )
+                        }
+                        
+                        // Draw vehicle detections
+                        detectedVehicles.forEach { vehicle ->
+                            val rect = vehicle.boundingBox.toComposeRect(
+                                size.width,
+                                size.height,
+                                frameWidth,
+                                frameHeight,
+                                frameRotation
+                            )
                             
-                            // Draw detection info
-                            val text = "LP: ${plate.confidence.format(2)} ${plate.recognizedText ?: ""}"
-                            // Simple text drawing without TextMeasurer for now
+                            // Choose color based on vehicle type
+                            val vehicleColor = when (vehicle.classId) {
+                                2 -> Color.Blue    // Car - Blue
+                                3 -> Color.Cyan    // Motorcycle - Cyan
+                                5 -> Color.Yellow  // Bus - Yellow
+                                7 -> Color.Red     // Truck - Red
+                                else -> Color.Magenta // Unknown - Magenta
+                            }
+                            
+                            // Draw the bounding box
+                            drawRect(
+                                color = vehicleColor,
+                                topLeft = rect.topLeft,
+                                size = rect.size,
+                                style = Stroke(width = 4.dp.toPx())
+                            )
                         }
                     }
                 }
@@ -516,9 +583,13 @@ fun ActualCameraView(
 
     // License plate detection states
     val detectedPlates by cameraViewModel.detectedPlates.collectAsState()
+    val detectedVehicles by cameraViewModel.detectedVehicles.collectAsState()
     val performanceMetrics by cameraViewModel.performanceMetrics.collectAsState()
+    val vehiclePerformanceMetrics by cameraViewModel.vehiclePerformanceMetrics.collectAsState()
     val totalDetections by cameraViewModel.totalDetections.collectAsState()
+    val totalVehicleDetections by cameraViewModel.totalVehicleDetections.collectAsState()
     val rawOutputLog by cameraViewModel.rawOutputLog.collectAsState()
+    val vehicleRawOutputLog by cameraViewModel.vehicleRawOutputLog.collectAsState()
     val frameWidth by cameraViewModel.frameWidth.collectAsState()
     val frameHeight by cameraViewModel.frameHeight.collectAsState()
     val frameRotation by cameraViewModel.frameRotation.collectAsState()
@@ -655,9 +726,13 @@ fun ActualCameraView(
             val showDebugInfo by cameraViewModel.showDebugInfo.collectAsState()
             DetectionOverlay(
                 detectedPlates = detectedPlates,
+                detectedVehicles = detectedVehicles,
                 performanceMetrics = performanceMetrics,
+                vehiclePerformanceMetrics = vehiclePerformanceMetrics,
                 totalDetections = totalDetections,
+                totalVehicleDetections = totalVehicleDetections,
                 rawOutputLog = rawOutputLog,
+                vehicleRawOutputLog = vehicleRawOutputLog,
                 gpuStatus = gpuStatus,
                 ocrEnabled = licensePlateSettings.enableOcr,
                 modifier = Modifier.fillMaxSize(),
@@ -674,9 +749,13 @@ fun ActualCameraView(
 @Composable
 fun DetectionOverlay(
     detectedPlates: List<PlateDetection>,
+    detectedVehicles: List<VehicleDetection>,
     performanceMetrics: Map<String, Long>,
+    vehiclePerformanceMetrics: Map<String, Long>,
     totalDetections: Int,
+    totalVehicleDetections: Int,
     rawOutputLog: String,
+    vehicleRawOutputLog: String,
     gpuStatus: Map<String, Boolean>,
     ocrEnabled: Boolean,
     modifier: Modifier = Modifier,
@@ -736,7 +815,7 @@ fun DetectionOverlay(
                 )
             }
             
-            // Draw bounding boxes and recognized text
+            // Draw license plate bounding boxes and recognized text
             detectedPlates.forEach { plate ->
                 val originalRect = plate.boundingBox
                 val rect = plate.boundingBox.toComposeRect(
@@ -747,7 +826,7 @@ fun DetectionOverlay(
                     imageRotation
                 )
                 
-                // Draw the bounding box
+                // Draw the bounding box in green for license plates
                 drawRect(
                     color = Color.Green,
                     topLeft = rect.topLeft,
@@ -771,10 +850,53 @@ fun DetectionOverlay(
                     )
                 }
             }
+            
+            // Draw vehicle detection bounding boxes
+            detectedVehicles.forEach { vehicle ->
+                val rect = vehicle.boundingBox.toComposeRect(
+                    size.width,
+                    size.height,
+                    imageWidth,
+                    imageHeight,
+                    imageRotation
+                )
+                
+                // Choose color based on vehicle type
+                val vehicleColor = when (vehicle.classId) {
+                    2 -> Color.Blue    // Car - Blue
+                    3 -> Color.Cyan    // Motorcycle - Cyan
+                    5 -> Color.Yellow  // Bus - Yellow
+                    7 -> Color.Red     // Truck - Red
+                    else -> Color.Magenta // Unknown - Magenta
+                }
+                
+                // Draw the bounding box
+                drawRect(
+                    color = vehicleColor,
+                    topLeft = rect.topLeft,
+                    size = rect.size,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                // Draw the vehicle class label above the box
+                val labelText = "${vehicle.className} (${(vehicle.confidence * 100).toInt()}%)"
+                val textLayoutResult = textMeasurer.measure(
+                    text = AnnotatedString(labelText),
+                    style = TextStyle(
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        background = vehicleColor.copy(alpha = 0.8f)
+                    )
+                )
+                drawText(
+                    textLayoutResult = textLayoutResult,
+                    topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top - textLayoutResult.size.height - 4.dp.toPx())
+                )
+            }
         }
 
         // Draw performance metrics with coordinate debugging information
-        if (showDebugInfo && (performanceMetrics.isNotEmpty() || detectedPlates.isNotEmpty())) {
+        if (showDebugInfo && (performanceMetrics.isNotEmpty() || vehiclePerformanceMetrics.isNotEmpty() || detectedPlates.isNotEmpty() || detectedVehicles.isNotEmpty())) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -782,8 +904,11 @@ fun DetectionOverlay(
                 verticalArrangement = Arrangement.Bottom,
                 horizontalAlignment = Alignment.Start
             ) {
-                val metricsText = performanceMetrics.entries.joinToString("\n") {
-                    "${it.key}: ${it.value} ms"
+                val lpMetricsText = performanceMetrics.entries.joinToString("\n") {
+                    "LP ${it.key}: ${it.value} ms"
+                }
+                val vehicleMetricsText = vehiclePerformanceMetrics.entries.joinToString("\n") {
+                    "V ${it.key}: ${it.value} ms"
                 }
                 val debugInfo = LicensePlateDetector.lastDebugInfo
                 
@@ -797,8 +922,8 @@ fun DetectionOverlay(
                     BR: (${canvasWidth.toInt()}, ${canvasHeight.toInt()})
                 """.trimIndent()
                 
-                // Detection coordinates
-                val detectionCoords = if (detectedPlates.isNotEmpty()) {
+                // License Plate Detection coordinates
+                val lpDetectionCoords = if (detectedPlates.isNotEmpty()) {
                     val plate = detectedPlates.first()
                     val originalRect = plate.boundingBox
                     val actualTransformedRect = plate.boundingBox.toComposeRect(
@@ -810,7 +935,7 @@ fun DetectionOverlay(
                     )
                     """
                     
-                    DETECTION COORDINATES:
+                    LP DETECTION COORDINATES:
                     Image: ${imageWidth}x${imageHeight} (rotation: ${imageRotation}°)
                     Original Rect: (${originalRect.left.format(1)}, ${originalRect.top.format(1)}) to (${originalRect.right.format(1)}, ${originalRect.bottom.format(1)})
                     Canvas Transformed: (${actualTransformedRect.left.format(1)}, ${actualTransformedRect.top.format(1)}) to (${actualTransformedRect.right.format(1)}, ${actualTransformedRect.bottom.format(1)})
@@ -818,7 +943,31 @@ fun DetectionOverlay(
                     Rect Size: ${(actualTransformedRect.right - actualTransformedRect.left).format(1)} x ${(actualTransformedRect.bottom - actualTransformedRect.top).format(1)}
                     """.trimIndent()
                 } else {
-                    "\n\nNO DETECTIONS"
+                    "\n\nNO LP DETECTIONS"
+                }
+                
+                // Vehicle Detection coordinates
+                val vehicleDetectionCoords = if (detectedVehicles.isNotEmpty()) {
+                    val vehicle = detectedVehicles.first()
+                    val originalRect = vehicle.boundingBox
+                    val actualTransformedRect = vehicle.boundingBox.toComposeRect(
+                        canvasWidth,
+                        canvasHeight,
+                        imageWidth,
+                        imageHeight,
+                        imageRotation
+                    )
+                    """
+                    
+                    VEHICLE DETECTION COORDINATES:
+                    Class: ${vehicle.className} (ID: ${vehicle.classId})
+                    Original Rect: (${originalRect.left.format(1)}, ${originalRect.top.format(1)}) to (${originalRect.right.format(1)}, ${originalRect.bottom.format(1)})
+                    Canvas Transformed: (${actualTransformedRect.left.format(1)}, ${actualTransformedRect.top.format(1)}) to (${actualTransformedRect.right.format(1)}, ${actualTransformedRect.bottom.format(1)})
+                    Confidence: ${vehicle.confidence.format(3)}
+                    Rect Size: ${(actualTransformedRect.right - actualTransformedRect.left).format(1)} x ${(actualTransformedRect.bottom - actualTransformedRect.top).format(1)}
+                    """.trimIndent()
+                } else {
+                    "\n\nNO VEHICLE DETECTIONS"
                 }
                 
                 // GPU Status Information
@@ -835,13 +984,22 @@ fun DetectionOverlay(
                 val ocrStatusText = "\n\nOCR STATUS: ${if (ocrEnabled) "✓ ENABLED" else "✗ DISABLED"}"
                 
                 val fullText = """
-                    $metricsText
-                    Total Detections: $totalDetections
+                    PERFORMANCE METRICS:
+                    $lpMetricsText
+                    $vehicleMetricsText
+                    
+                    DETECTION COUNTS:
+                    Total LP Detections: $totalDetections
+                    Total Vehicle Detections: $totalVehicleDetections
                     Debug: $debugInfo
-                    TFLite Output: $rawOutputLog
+                    
+                    MODEL OUTPUTS:
+                    LP TFLite: $rawOutputLog
+                    Vehicle TFLite: $vehicleRawOutputLog
                     
                     $cameraFeedCoords
-                    $detectionCoords
+                    $lpDetectionCoords
+                    $vehicleDetectionCoords
                     $gpuStatusText
                     $ocrStatusText
                 """.trimIndent()
