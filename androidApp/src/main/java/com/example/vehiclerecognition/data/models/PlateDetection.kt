@@ -11,7 +11,8 @@ data class PlateDetection(
     val recognizedText: String? = null,
     val isValidFormat: Boolean = false,
     val processingTimeMs: Long = 0L,
-    val detectionTime: Long? = null // Timestamp when detection was made for expiration tracking
+    val detectionTime: Long? = null, // Timestamp when detection was made for expiration tracking
+    val vehicleId: String? = null // ID of the vehicle this license plate belongs to
 )
 
 /**

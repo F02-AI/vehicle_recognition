@@ -1,6 +1,7 @@
 package com.example.vehiclerecognition.ui.camera
 
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -145,6 +146,7 @@ class CameraViewModel @Inject constructor(
         // Start collecting settings updates and reinitialize detector when GPU settings change
         viewModelScope.launch {
             var previousGpuSetting: Boolean? = null
+            var previousDetectionMode: DetectionMode? = null
             var isFirstCollection = true
             
             licensePlateRepository.settings.collect { settings ->
@@ -156,14 +158,23 @@ class CameraViewModel @Inject constructor(
                     Log.d("CameraViewModel", "Updated zoom ratio from settings: ${settings.cameraZoomRatio}")
                 }
                 
-                // Initialize detector on first collection, reinitialize on subsequent GPU changes
+                // Initialize detector on first collection, reinitialize on subsequent GPU or detection mode changes
+                val currentDetectionMode = settingsRepository.getDetectionMode()
                 val shouldReinitialize = if (isFirstCollection) {
                     // On first collection, always initialize with actual saved settings
-                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, initializing detector")
+                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, Mode=$currentDetectionMode, initializing detector")
                     true
                 } else {
-                    // On subsequent collections, reinitialize only if GPU setting changed
-                    previousGpuSetting != settings.enableGpuAcceleration
+                    // On subsequent collections, reinitialize if GPU setting or detection mode changed
+                    val gpuChanged = previousGpuSetting != settings.enableGpuAcceleration
+                    val modeChanged = previousDetectionMode != currentDetectionMode
+                    if (gpuChanged) {
+                        Log.d("CameraViewModel", "GPU acceleration setting changed to ${settings.enableGpuAcceleration}, reinitializing detector")
+                    }
+                    if (modeChanged) {
+                        Log.d("CameraViewModel", "Detection mode changed from $previousDetectionMode to $currentDetectionMode, reinitializing detector")
+                    }
+                    gpuChanged || modeChanged
                 }
                 
                 if (shouldReinitialize) {
@@ -181,23 +192,41 @@ class CameraViewModel @Inject constructor(
                     delay(100)
                     
                     try {
-                        val licensePlateSuccess = if (isFirstCollection) {
-                            // Use initialize for first time
-                            licensePlateRepository.initialize()
+                        // Use the detection mode we already retrieved above
+                        val needsLpDetection = needsLicensePlateDetection(currentDetectionMode)
+                        val needsVehicleDetection = needsVehicleDetection(currentDetectionMode)
+                        
+                        Log.d("CameraViewModel", "Initializing models based on mode $currentDetectionMode - LP: $needsLpDetection, Vehicle: $needsVehicleDetection")
+                        
+                        // Initialize license plate detection only if needed
+                        val licensePlateSuccess = if (needsLpDetection) {
+                            if (isFirstCollection) {
+                                licensePlateRepository.initialize()
+                            } else {
+                                licensePlateRepository.reinitializeWithSettings(settings)
+                            }
                         } else {
-                            // Use reinitialize for subsequent changes
-                            licensePlateRepository.reinitializeWithSettings(settings)
+                            Log.d("CameraViewModel", "Skipping license plate model initialization (not needed for mode: $currentDetectionMode)")
+                            true // Return success since it's not needed
                         }
                         
-                        // Initialize vehicle segmentation processor with same settings
-                        val vehicleSegmentationSuccess = if (isFirstCollection) {
-                            vehicleSegmentationProcessor.initialize(settings)
+                        // Initialize vehicle segmentation processor only if needed
+                        val vehicleSegmentationSuccess = if (needsVehicleDetection) {
+                            if (isFirstCollection) {
+                                vehicleSegmentationProcessor.initialize(settings)
+                            } else {
+                                vehicleSegmentationProcessor.reinitializeDetector(settings)
+                            }
                         } else {
-                            vehicleSegmentationProcessor.reinitializeDetector(settings)
+                            Log.d("CameraViewModel", "Skipping vehicle detection model initialization (not needed for mode: $currentDetectionMode)")
+                            true // Return success since it's not needed
                         }
                         
                         if (licensePlateSuccess && vehicleSegmentationSuccess) {
-                            Log.d("CameraViewModel", "Both detectors ${if (isFirstCollection) "initialized" else "reinitialized"} successfully with GPU setting: ${settings.enableGpuAcceleration}")
+                            val enabledModels = mutableListOf<String>()
+                            if (needsLpDetection) enabledModels.add("LP")
+                            if (needsVehicleDetection) enabledModels.add("Vehicle")
+                            Log.d("CameraViewModel", "Models ${if (isFirstCollection) "initialized" else "reinitialized"} successfully: ${enabledModels.joinToString(", ")} (GPU: ${settings.enableGpuAcceleration})")
                         } else {
                             Log.w("CameraViewModel", "Failed to ${if (isFirstCollection) "initialize" else "reinitialize"} detectors - LP: $licensePlateSuccess, VS: $vehicleSegmentationSuccess")
                         }
@@ -207,6 +236,7 @@ class CameraViewModel @Inject constructor(
                 }
                 
                 previousGpuSetting = settings.enableGpuAcceleration
+                previousDetectionMode = currentDetectionMode
                 isFirstCollection = false
             }
         }
@@ -291,9 +321,38 @@ class CameraViewModel @Inject constructor(
                 val currentSettings = _currentSettings.value
                 Log.d("CameraViewModel", "Current settings: confidence=${currentSettings.minConfidenceThreshold}, gpu=${currentSettings.enableGpuAcceleration}")
                 
-                // Process both license plate and vehicle detection in parallel
-                val lpResult = licensePlateRepository.processFrame(bitmap, currentSettings)
-                val vehicleResult = vehicleSegmentationProcessor.processFrame(bitmap, currentSettings)
+                // Get current detection mode to determine which models to run
+                val currentDetectionMode = settingsRepository.getDetectionMode()
+                Log.d("CameraViewModel", "Current detection mode: $currentDetectionMode")
+                
+                // Determine which models need to run based on detection mode
+                val needsLicensePlateDetection = needsLicensePlateDetection(currentDetectionMode)
+                val needsVehicleDetection = needsVehicleDetection(currentDetectionMode)
+                
+                Log.d("CameraViewModel", "Running models - LP: $needsLicensePlateDetection, Vehicle: $needsVehicleDetection")
+
+                // Process only the required detection models based on settings
+                val lpResult = if (needsLicensePlateDetection) {
+                    licensePlateRepository.processFrame(bitmap, currentSettings)
+                } else {
+                    // Return empty result when license plate detection is not needed
+                    com.example.vehiclerecognition.ml.processors.ProcessorResult(
+                        detections = emptyList(),
+                        performance = emptyMap(),
+                        rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
+                    )
+                }
+                
+                val vehicleResult = if (needsVehicleDetection) {
+                    vehicleSegmentationProcessor.processFrame(bitmap, currentSettings)
+                } else {
+                    // Return empty result when vehicle detection is not needed
+                    com.example.vehiclerecognition.data.models.VehicleSegmentationResult(
+                        detections = emptyList(),
+                        performance = emptyMap(),
+                        rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
+                    )
+                }
 
                 Log.d("CameraViewModel", "LP Detection result: ${lpResult.detections.size} plates found")
                 Log.d("CameraViewModel", "Vehicle Detection result: ${vehicleResult.detections.size} vehicles found")
@@ -334,6 +393,14 @@ class CameraViewModel @Inject constructor(
                     vehicleResult.detections.forEachIndexed { index, detection ->
                         Log.d("CameraViewModel", "Vehicle Detection $index: ${detection.className} bbox=${detection.boundingBox}, conf=${detection.confidence}")
                     }
+                }
+
+                // Assign vehicle IDs to license plates only if both detections were run
+                if (needsLicensePlateDetection && needsVehicleDetection) {
+                    assignVehicleIdsToLicensePlates()
+                    Log.d("CameraViewModel", "Vehicle ID assignment performed")
+                } else {
+                    Log.d("CameraViewModel", "Vehicle ID assignment skipped (LP needed: $needsLicensePlateDetection, Vehicle needed: $needsVehicleDetection)")
                 }
 
                 // Always show performance metrics in debug mode
@@ -415,6 +482,94 @@ class CameraViewModel @Inject constructor(
         _cameraPreviewWidth.value = width
         _cameraPreviewHeight.value = height
         Log.d("CameraViewModel", "Camera preview dimensions updated: ${width}x${height}")
+    }
+
+    /**
+     * Assigns vehicle IDs to license plates that fall within vehicle bounding boxes
+     */
+    private fun assignVehicleIdsToLicensePlates() {
+        val currentPlates = _detectedPlates.value
+        val currentVehicles = _detectedVehicles.value
+        
+        if (currentPlates.isEmpty() || currentVehicles.isEmpty()) {
+            return // Nothing to assign
+        }
+        
+        // Create updated license plates with assigned vehicle IDs
+        val updatedPlates = currentPlates.map { plate ->
+            // Find the vehicle whose bounding box contains or intersects with this license plate
+            val containingVehicle = currentVehicles.find { vehicle ->
+                boundingBoxIntersects(plate.boundingBox, vehicle.boundingBox)
+            }
+            
+            if (containingVehicle != null && plate.vehicleId != containingVehicle.id) {
+                Log.d("CameraViewModel", "Assigning vehicle ID ${containingVehicle.id} to license plate at ${plate.boundingBox}")
+                plate.copy(vehicleId = containingVehicle.id)
+            } else {
+                plate
+            }
+        }
+        
+        // Update the plates if any assignments were made
+        if (updatedPlates != currentPlates) {
+            _detectedPlates.value = updatedPlates
+            val assignmentCount = updatedPlates.count { it.vehicleId != null }
+            Log.d("CameraViewModel", "Vehicle ID assignment complete: $assignmentCount plates assigned to vehicles")
+        }
+    }
+
+    /**
+     * Determines if license plate detection is needed based on the current detection mode
+     */
+    private fun needsLicensePlateDetection(mode: DetectionMode): Boolean {
+        return when (mode) {
+            DetectionMode.LP,           // License Plate only
+            DetectionMode.LP_COLOR,     // License Plate + Color
+            DetectionMode.LP_TYPE,      // License Plate + Type
+            DetectionMode.LP_COLOR_TYPE // License Plate + Color + Type
+            -> true
+            DetectionMode.COLOR_TYPE,   // Color + Type (no LP needed)
+            DetectionMode.COLOR         // Color only (no LP needed)
+            -> false
+        }
+    }
+
+    /**
+     * Determines if vehicle detection is needed based on the current detection mode
+     */
+    private fun needsVehicleDetection(mode: DetectionMode): Boolean {
+        return when (mode) {
+            DetectionMode.LP_COLOR,     // License Plate + Color
+            DetectionMode.LP_TYPE,      // License Plate + Type
+            DetectionMode.LP_COLOR_TYPE,// License Plate + Color + Type
+            DetectionMode.COLOR_TYPE,   // Color + Type
+            DetectionMode.COLOR         // Color only
+            -> true
+            DetectionMode.LP            // License Plate only (no vehicle detection needed)
+            -> false
+        }
+    }
+
+    /**
+     * Checks if two bounding boxes intersect or if the first box is contained within the second
+     */
+    private fun boundingBoxIntersects(plateBox: RectF, vehicleBox: RectF): Boolean {
+        // Check if the license plate bounding box intersects with or is contained within the vehicle bounding box
+        // We use intersects() which returns true if the rectangles overlap in any way
+        val intersects = RectF.intersects(plateBox, vehicleBox)
+        
+        // Additional check: if the license plate center point is within the vehicle box
+        val plateCenterX = plateBox.centerX()
+        val plateCenterY = plateBox.centerY()
+        val centerWithinVehicle = vehicleBox.contains(plateCenterX, plateCenterY)
+        
+        val result = intersects || centerWithinVehicle
+        
+        if (result) {
+            Log.d("CameraViewModel", "Bounding box match: Plate(${plateBox.left.toInt()},${plateBox.top.toInt()},${plateBox.right.toInt()},${plateBox.bottom.toInt()}) intersects with Vehicle(${vehicleBox.left.toInt()},${vehicleBox.top.toInt()},${vehicleBox.right.toInt()},${vehicleBox.bottom.toInt()})")
+        }
+        
+        return result
     }
 
     /**

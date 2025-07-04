@@ -492,20 +492,23 @@ fun ActualCameraView(
                             )
                         }
                     }
+                    
+                    // Show model execution status
                     if (rawOutputLog.isNotEmpty()) {
                         Text(
-                            text = "LP Output: $rawOutputLog",
-                            color = if (rawOutputLog == "Error") Color.Red else Color.Yellow,
+                            text = "LP Model: $rawOutputLog",
+                            color = if (rawOutputLog.contains("Skipped")) Color.Yellow else Color.Green,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                     if (vehicleRawOutputLog.isNotEmpty()) {
                         Text(
-                            text = "Vehicle Output: $vehicleRawOutputLog",
-                            color = if (vehicleRawOutputLog == "Error") Color.Red else Color.Cyan,
+                            text = "Vehicle Model: $vehicleRawOutputLog",
+                            color = if (vehicleRawOutputLog.contains("Skipped")) Color.Yellow else Color.Blue,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+
 
                     // Add more debug info
                     Text(
@@ -517,6 +520,19 @@ fun ActualCameraView(
                     Text(
                         text = "Confidence: ${(licensePlateSettings.minConfidenceThreshold * 100).toInt()}%",
                         color = Color.Cyan,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    
+                    // Show optimization status based on raw output logs
+                    val optimizationStatus = when {
+                        rawOutputLog.contains("Skipped") && vehicleRawOutputLog.contains("Skipped") -> "Invalid Mode (Both Skipped)"
+                        rawOutputLog.contains("Skipped") -> "LP-Only Mode Optimization Active"
+                        vehicleRawOutputLog.contains("Skipped") -> "Vehicle-Only Mode Optimization Active"
+                        else -> "Full Detection Mode"
+                    }
+                    Text(
+                        text = "Status: $optimizationStatus",
+                        color = if (rawOutputLog.contains("Skipped") || vehicleRawOutputLog.contains("Skipped")) Color.Yellow else Color.Green,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -907,10 +923,16 @@ fun DetectionOverlay(
                     style = Stroke(width = 2.dp.toPx())
                 )
 
-                // Draw the recognized text above the box
+                // Draw the recognized text and vehicle ID above the box
                 plate.recognizedText?.let { text ->
+                    val plateText = if (plate.vehicleId != null) {
+                        "$text (V:${plate.vehicleId})"
+                    } else {
+                        text
+                    }
+                    
                     val textLayoutResult = textMeasurer.measure(
-                        text = AnnotatedString(text),
+                        text = AnnotatedString(plateText),
                         style = TextStyle(
                             color = Color.White,
                             fontSize = 16.sp,
@@ -1050,6 +1072,8 @@ fun DetectionOverlay(
                     Canvas Transformed: (${actualTransformedRect.left.format(1)}, ${actualTransformedRect.top.format(1)}) to (${actualTransformedRect.right.format(1)}, ${actualTransformedRect.bottom.format(1)})
                     Confidence: ${plate.confidence.format(3)}
                     Rect Size: ${(actualTransformedRect.right - actualTransformedRect.left).format(1)} x ${(actualTransformedRect.bottom - actualTransformedRect.top).format(1)}
+                    Vehicle ID: ${plate.vehicleId ?: "Not Assigned"}
+                    Text: ${plate.recognizedText ?: "Not Recognized"}
                     """.trimIndent()
                 } else {
                     "\n\nNO LP DETECTIONS"
@@ -1102,6 +1126,26 @@ fun DetectionOverlay(
                 // OCR Status Information
                 val ocrStatusText = "\n\nOCR STATUS: ${if (ocrEnabled) "✓ ENABLED" else "✗ DISABLED"}"
                 
+                // Optimization Status Information
+                val optimizationStatusText = when {
+                    rawOutputLog.contains("Skipped") && vehicleRawOutputLog.contains("Skipped") -> "\n\nOPTIMIZATION: ⚠️  Invalid Mode (Both Models Skipped)"
+                    rawOutputLog.contains("Skipped") -> "\n\nOPTIMIZATION: ✓ Vehicle-Only Mode Active (LP Model Skipped)"
+                    vehicleRawOutputLog.contains("Skipped") -> "\n\nOPTIMIZATION: ✓ LP-Only Mode Active (Vehicle Model Skipped)"
+                    else -> "\n\nOPTIMIZATION: Full Detection Mode (Both Models Running)"
+                }
+                
+                // License Plate to Vehicle Assignments
+                val assignmentText = if (detectedPlates.isNotEmpty()) {
+                    val assignments = detectedPlates.mapIndexed { index, plate ->
+                        val plateText = plate.recognizedText ?: "LP-$index"
+                        val vehicleId = plate.vehicleId ?: "Unassigned"
+                        "$plateText → Vehicle $vehicleId"
+                    }
+                    "\n\nPLATE-VEHICLE ASSIGNMENTS:\n" + assignments.joinToString("\n")
+                } else {
+                    "\n\nPLATE-VEHICLE ASSIGNMENTS: None"
+                }
+                
                 // Vehicle Summary Information
                 val vehicleSummaryText = if (detectedVehicles.isNotEmpty()) {
                     val vehicleList = detectedVehicles.map { vehicle ->
@@ -1130,15 +1174,17 @@ fun DetectionOverlay(
                     Total Vehicle Detections: $totalVehicleDetections
                     Debug: $debugInfo
                     
-                    MODEL OUTPUTS:
-                    LP TFLite: $rawOutputLog
-                    Vehicle TFLite: $vehicleRawOutputLog
+                    MODEL EXECUTION STATUS:
+                    LP Model: $rawOutputLog
+                    Vehicle Model: $vehicleRawOutputLog
                     
                     $cameraFeedCoords
                     $lpDetectionCoords
                     $vehicleDetectionCoords
                     $gpuStatusText
                     $ocrStatusText
+                    $optimizationStatusText
+                    $assignmentText
                     $vehicleSummaryText
                 """.trimIndent()
                 
