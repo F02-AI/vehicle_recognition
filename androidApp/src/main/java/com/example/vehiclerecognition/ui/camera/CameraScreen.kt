@@ -72,6 +72,9 @@ import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.graphics.SurfaceTexture
 import android.view.TextureView
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.DrawScope
 
 /**
  * Converts an Android Graphics RectF to a Compose Geometry Rect.
@@ -557,6 +560,17 @@ fun ActualCameraView(
                                 else -> Color.Magenta // Unknown - Magenta
                             }
                             
+                            // Draw segmentation mask if available
+                            vehicle.segmentationMask?.let { mask ->
+                                drawSegmentationMask(
+                                    mask = mask,
+                                    maskWidth = vehicle.maskWidth,
+                                    maskHeight = vehicle.maskHeight,
+                                    boundingBox = rect,
+                                    color = vehicleColor.copy(alpha = 0.3f) // Semi-transparent
+                                )
+                            }
+                            
                             // Draw the bounding box
                             drawRect(
                                 color = vehicleColor,
@@ -870,12 +884,23 @@ fun DetectionOverlay(
                     else -> Color.Magenta // Unknown - Magenta
                 }
                 
+                // Draw segmentation mask if available
+                vehicle.segmentationMask?.let { mask ->
+                    drawSegmentationMask(
+                        mask = mask,
+                        maskWidth = vehicle.maskWidth,
+                        maskHeight = vehicle.maskHeight,
+                        boundingBox = rect,
+                        color = vehicleColor.copy(alpha = 0.3f) // Semi-transparent
+                    )
+                }
+                
                 // Draw the bounding box
                 drawRect(
                     color = vehicleColor,
                     topLeft = rect.topLeft,
                     size = rect.size,
-                    style = Stroke(width = 3.dp.toPx())
+                    style = Stroke(width = 4.dp.toPx())
                 )
 
                 // Draw the vehicle class label above the box
@@ -1011,6 +1036,40 @@ fun DetectionOverlay(
                     modifier = Modifier
                         .background(Color.Black.copy(alpha = 0.8f))
                         .padding(8.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Extension function to draw segmentation mask overlay
+ */
+fun DrawScope.drawSegmentationMask(
+    mask: Array<FloatArray>,
+    maskWidth: Int,
+    maskHeight: Int,
+    boundingBox: androidx.compose.ui.geometry.Rect,
+    color: Color
+) {
+    // Calculate pixel size for each mask cell within the bounding box
+    val cellWidth = boundingBox.width / maskWidth
+    val cellHeight = boundingBox.height / maskHeight
+    
+    // Draw mask pixels
+    for (y in 0 until maskHeight) {
+        for (x in 0 until maskWidth) {
+            val maskValue = mask[y][x]
+            
+            // Lowered threshold to show more mask details
+            if (maskValue > 0.3f) { // Lowered from 0.5f to 0.3f
+                val pixelLeft = boundingBox.left + x * cellWidth
+                val pixelTop = boundingBox.top + y * cellHeight
+                
+                drawRect(
+                    color = color.copy(alpha = (maskValue * 0.8f).coerceIn(0.1f, 0.7f)), // Better alpha scaling
+                    topLeft = Offset(pixelLeft, pixelTop),
+                    size = Size(cellWidth, cellHeight)
                 )
             }
         }

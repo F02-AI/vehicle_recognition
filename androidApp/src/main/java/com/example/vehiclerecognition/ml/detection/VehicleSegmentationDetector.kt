@@ -33,6 +33,16 @@ import java.util.Collections
 private fun Float.format(digits: Int) = "%.${digits}f".format(this)
 
 /**
+ * Data class to hold four values (like Triple but with four elements)
+ */
+data class Quadruple<A, B, C, D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D
+)
+
+/**
  * Vehicle segmentation detector using YOLO11 segmentation model
  * Provides both bounding box detection and pixel-level segmentation masks
  */
@@ -293,7 +303,7 @@ class VehicleSegmentationDetector @Inject constructor(
         
         // Add segmentation masks if available
         return if (masksArray != null && masksShape != null) {
-            addSegmentationMasks(nmsDetections, masksArray, masksShape)
+            addSegmentationMasks(nmsDetections, masksArray, masksShape, originalWidth, originalHeight)
         } else {
             nmsDetections.map { (bbox, confidence, classId) ->
                 VehicleDetection(
@@ -312,9 +322,9 @@ class VehicleSegmentationDetector @Inject constructor(
         detectionsShape: IntArray,
         originalWidth: Int,
         originalHeight: Int
-    ): List<Triple<RectF, Float, Int>> {
+    ): List<Quadruple<RectF, Float, Int, FloatArray>> {
         
-        val detections = mutableListOf<Triple<RectF, Float, Int>>()
+        val detections = mutableListOf<Quadruple<RectF, Float, Int, FloatArray>>()
         
         // YOLO11 segmentation format: [batch, values_per_detection, num_detections]
         // For YOLO11-seg: [1, 116, 8400] where 116 = 4(bbox) + 80(classes) + 32(mask_coeffs)
@@ -407,7 +417,17 @@ class VehicleSegmentationDetector @Inject constructor(
                 val x2 = (centerX + width / 2) * originalWidth
                 val y2 = (centerY + height / 2) * originalHeight
                 
-                detections.add(Triple(RectF(x1, y1, x2, y2), maxConfidence, bestClassId))
+                // Extract mask coefficients (last 32 values)
+                val maskCoeffs = FloatArray(32)
+                for (coeffIdx in 0 until 32) {
+                    maskCoeffs[coeffIdx] = if (isTransposed) {
+                        detectionsArray[(4 + NUM_CLASSES + coeffIdx) * numDetections + i]
+                    } else {
+                        detectionsArray[i * numValues + 4 + NUM_CLASSES + coeffIdx]
+                    }
+                }
+                
+                detections.add(Quadruple(RectF(x1, y1, x2, y2), maxConfidence, bestClassId, maskCoeffs))
                 
                 Log.d(TAG, "Vehicle detected: class=$bestClassId (${VehicleClass.getDisplayName(bestClassId)}), conf=${maxConfidence.format(3)}, bbox=(${centerX.format(3)}, ${centerY.format(3)}, ${width.format(3)}, ${height.format(3)})")
             }
@@ -417,9 +437,9 @@ class VehicleSegmentationDetector @Inject constructor(
         return detections
     }
     
-    private fun applyNMS(detections: List<Triple<RectF, Float, Int>>): List<Triple<RectF, Float, Int>> {
+    private fun applyNMS(detections: List<Quadruple<RectF, Float, Int, FloatArray>>): List<Quadruple<RectF, Float, Int, FloatArray>> {
         val sortedDetections = detections.sortedByDescending { it.second }
-        val finalDetections = mutableListOf<Triple<RectF, Float, Int>>()
+        val finalDetections = mutableListOf<Quadruple<RectF, Float, Int, FloatArray>>()
         val selected = BooleanArray(sortedDetections.size)
 
         for (i in sortedDetections.indices) {
@@ -461,39 +481,267 @@ class VehicleSegmentationDetector @Inject constructor(
     }
     
     private fun addSegmentationMasks(
-        detections: List<Triple<RectF, Float, Int>>,
+        detections: List<Quadruple<RectF, Float, Int, FloatArray>>,
         masksArray: FloatArray,
-        masksShape: IntArray
+        masksShape: IntArray,
+        originalWidth: Int,
+        originalHeight: Int
     ): List<VehicleDetection> {
         
-        // For simplicity, we'll create placeholder masks
-        // In a full implementation, you'd extract and resize the actual segmentation masks
-        val maskHeight = if (masksShape.size >= 3) masksShape[2] else MASK_SIZE
-        val maskWidth = if (masksShape.size >= 4) masksShape[3] else MASK_SIZE
+        Log.d(TAG, "Generating segmentation masks for ${detections.size} detections")
+        Log.d(TAG, "Mask prototypes shape: ${masksShape.contentToString()}")
+        Log.d(TAG, "Original image size: ${originalWidth}x${originalHeight}")
         
-        return detections.mapIndexed { index, (bbox, confidence, classId) ->
-            // Create a simple rectangular mask as placeholder
-            val mask = Array(maskHeight) { FloatArray(maskWidth) }
+        // YOLO11 mask prototypes format: [1, 160, 160, 32]
+        val batchSize = masksShape[0]
+        val prototypeHeight = masksShape[1] // 160
+        val prototypeWidth = masksShape[2] // 160  
+        val numPrototypes = masksShape[3] // 32
+        
+        return detections.mapIndexed { index, (bbox, confidence, classId, maskCoeffs) ->
             
-            // Fill with a simple pattern (in real implementation, extract from masksArray)
-            for (y in 0 until maskHeight) {
-                for (x in 0 until maskWidth) {
-                    mask[y][x] = if (x > maskWidth/4 && x < 3*maskWidth/4 && 
-                                    y > maskHeight/4 && y < 3*maskHeight/4) 1.0f else 0.0f
-                }
-            }
+            // Generate full mask at prototype resolution (160x160)
+            val fullMask = generateMask(maskCoeffs, masksArray, prototypeHeight, prototypeWidth, numPrototypes)
+            
+            // Convert bounding box to mask coordinates using actual image dimensions
+            val maskBbox = convertBboxToMaskCoords(bbox, originalWidth, originalHeight, prototypeWidth, prototypeHeight)
+            
+            Log.d(TAG, "Bbox in image coords: (${bbox.left.toInt()}, ${bbox.top.toInt()}) to (${bbox.right.toInt()}, ${bbox.bottom.toInt()})")
+            Log.d(TAG, "Bbox in mask coords: (${maskBbox.left.toInt()}, ${maskBbox.top.toInt()}) to (${maskBbox.right.toInt()}, ${maskBbox.bottom.toInt()})")
+            
+            // Crop mask to bounding box area
+            val croppedMask = cropMask(fullMask, maskBbox, prototypeWidth, prototypeHeight)
+            
+            // Validate and log mask quality
+            val maskStats = validateMask(croppedMask)
+            Log.d(TAG, "Mask stats for ${VehicleClass.getDisplayName(classId)}: pixels=${maskStats.first}, max=${maskStats.second.format(3)}, avg=${maskStats.third.format(3)}")
+            
+            // Resize cropped mask to a good display resolution
+            val targetMaskSize = 128 // Increased resolution for better quality
+            val resizedMask = resizeMask(
+                croppedMask, 
+                croppedMask.size, 
+                croppedMask[0].size, 
+                targetMaskSize, 
+                targetMaskSize
+            )
+            
+            Log.d(TAG, "Generated mask for ${VehicleClass.getDisplayName(classId)}: cropped from ${croppedMask[0].size}x${croppedMask.size} to ${targetMaskSize}x${targetMaskSize}")
             
             VehicleDetection(
                 boundingBox = bbox,
                 confidence = confidence,
                 classId = classId,
                 className = VehicleClass.getDisplayName(classId),
-                segmentationMask = mask,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
+                segmentationMask = resizedMask,
+                maskWidth = targetMaskSize,
+                maskHeight = targetMaskSize,
+                maskCoeffs = maskCoeffs,
                 detectionTime = System.currentTimeMillis()
             )
         }
+    }
+    
+    /**
+     * Convert bounding box from image coordinates to mask coordinates
+     */
+    private fun convertBboxToMaskCoords(
+        bbox: RectF,
+        imageWidth: Int,
+        imageHeight: Int,
+        maskWidth: Int,
+        maskHeight: Int
+    ): RectF {
+        // Convert from image coordinates to normalized coordinates (0-1)
+        val normalizedLeft = bbox.left / imageWidth
+        val normalizedTop = bbox.top / imageHeight
+        val normalizedRight = bbox.right / imageWidth
+        val normalizedBottom = bbox.bottom / imageHeight
+        
+        // Convert to mask coordinates
+        return RectF(
+            normalizedLeft * maskWidth,
+            normalizedTop * maskHeight,
+            normalizedRight * maskWidth,
+            normalizedBottom * maskHeight
+        )
+    }
+    
+    /**
+     * Crop mask to bounding box area
+     */
+    private fun cropMask(
+        fullMask: Array<FloatArray>,
+        maskBbox: RectF,
+        maskWidth: Int,
+        maskHeight: Int
+    ): Array<FloatArray> {
+        
+        // Ensure bounds are within mask dimensions
+        val left = maskBbox.left.toInt().coerceIn(0, maskWidth - 1)
+        val top = maskBbox.top.toInt().coerceIn(0, maskHeight - 1)
+        val right = maskBbox.right.toInt().coerceIn(left + 1, maskWidth)
+        val bottom = maskBbox.bottom.toInt().coerceIn(top + 1, maskHeight)
+        
+        val cropWidth = right - left
+        val cropHeight = bottom - top
+        
+        val croppedMask = Array(cropHeight) { FloatArray(cropWidth) }
+        
+        for (y in 0 until cropHeight) {
+            for (x in 0 until cropWidth) {
+                val sourceY = top + y
+                val sourceX = left + x
+                if (sourceY < maskHeight && sourceX < maskWidth) {
+                    croppedMask[y][x] = fullMask[sourceY][sourceX]
+                }
+            }
+        }
+        
+        return croppedMask
+    }
+    
+    /**
+     * Generate segmentation mask by combining mask coefficients with prototypes
+     */
+    private fun generateMask(
+        coefficients: FloatArray,
+        prototypes: FloatArray,
+        prototypeHeight: Int,
+        prototypeWidth: Int,
+        numPrototypes: Int
+    ): Array<FloatArray> {
+        
+        val mask = Array(prototypeHeight) { FloatArray(prototypeWidth) }
+        
+        // Combine coefficients with prototypes using matrix multiplication
+        for (y in 0 until prototypeHeight) {
+            for (x in 0 until prototypeWidth) {
+                var pixelValue = 0f
+                
+                for (p in 0 until numPrototypes) {
+                    // Access prototype value: prototypes[y, x, p] in flattened array
+                    val prototypeIndex = y * prototypeWidth * numPrototypes + x * numPrototypes + p
+                    if (prototypeIndex < prototypes.size) {
+                        val prototypeValue = prototypes[prototypeIndex]
+                        pixelValue += coefficients[p] * prototypeValue
+                    }
+                }
+                
+                // Apply sigmoid activation and normalize to 0-1 range
+                mask[y][x] = sigmoid(pixelValue)
+            }
+        }
+        
+        // Post-process mask to enhance contrast
+        return enhanceMask(mask, prototypeHeight, prototypeWidth)
+    }
+    
+    /**
+     * Enhance mask contrast and quality
+     */
+    private fun enhanceMask(
+        mask: Array<FloatArray>,
+        height: Int,
+        width: Int
+    ): Array<FloatArray> {
+        
+        // Find min and max values for normalization
+        var minVal = Float.MAX_VALUE
+        var maxVal = Float.MIN_VALUE
+        
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val value = mask[y][x]
+                if (value < minVal) minVal = value
+                if (value > maxVal) maxVal = value
+            }
+        }
+        
+        // Normalize and enhance contrast
+        val range = maxVal - minVal
+        if (range > 0f) {
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    // Normalize to 0-1
+                    var normalized = (mask[y][x] - minVal) / range
+                    
+                    // Apply contrast enhancement (gamma correction)
+                    normalized = Math.pow(normalized.toDouble(), 0.7).toFloat() // Slightly enhance contrast
+                    
+                    mask[y][x] = normalized.coerceIn(0f, 1f)
+                }
+            }
+        }
+        
+        return mask
+    }
+    
+    /**
+     * Improved sigmoid activation function
+     */
+    private fun sigmoid(x: Float): Float {
+        return if (x > 0) {
+            val exp = kotlin.math.exp(-x)
+            1f / (1f + exp)
+        } else {
+            val exp = kotlin.math.exp(x)
+            exp / (1f + exp)
+        }
+    }
+    
+    /**
+     * Resize mask to target dimensions using nearest neighbor interpolation
+     */
+    private fun resizeMask(
+        mask: Array<FloatArray>,
+        originalHeight: Int,
+        originalWidth: Int,
+        targetHeight: Int,
+        targetWidth: Int
+    ): Array<FloatArray> {
+        
+        val resized = Array(targetHeight) { FloatArray(targetWidth) }
+        
+        val scaleY = originalHeight.toFloat() / targetHeight
+        val scaleX = originalWidth.toFloat() / targetWidth
+        
+        for (y in 0 until targetHeight) {
+            for (x in 0 until targetWidth) {
+                val sourceY = y * scaleY
+                val sourceX = x * scaleX
+                
+                // Nearest neighbor interpolation
+                val nearestY = sourceY.toInt().coerceIn(0, originalHeight - 1)
+                val nearestX = sourceX.toInt().coerceIn(0, originalWidth - 1)
+                
+                resized[y][x] = mask[nearestY][nearestX]
+            }
+        }
+        
+        return resized
+    }
+    
+    /**
+     * Validate mask and return statistics: (active_pixels, max_value, avg_value)
+     */
+    private fun validateMask(mask: Array<FloatArray>): Triple<Int, Float, Float> {
+        var activePixels = 0
+        var maxValue = 0f
+        var totalValue = 0f
+        var totalPixels = 0
+        
+        for (row in mask) {
+            for (value in row) {
+                if (value > 0.3f) activePixels++ // Count pixels above threshold
+                if (value > maxValue) maxValue = value
+                totalValue += value
+                totalPixels++
+            }
+        }
+        
+        val avgValue = if (totalPixels > 0) totalValue / totalPixels else 0f
+        return Triple(activePixels, maxValue, avgValue)
     }
     
     private fun runSimulatedDetection(bitmap: Bitmap): List<VehicleDetection> {

@@ -13,6 +13,7 @@ data class VehicleDetection(
     val segmentationMask: Array<FloatArray>? = null,
     val maskWidth: Int = 0,
     val maskHeight: Int = 0,
+    val maskCoeffs: FloatArray? = null, // Mask coefficients from YOLO11 segmentation
     val detectionTime: Long? = null // Timestamp when detection was made
 ) {
     override fun equals(other: Any?): Boolean {
@@ -28,6 +29,10 @@ data class VehicleDetection(
         if (maskWidth != other.maskWidth) return false
         if (maskHeight != other.maskHeight) return false
         if (detectionTime != other.detectionTime) return false
+        if (maskCoeffs != null) {
+            if (other.maskCoeffs == null) return false
+            if (!maskCoeffs.contentEquals(other.maskCoeffs)) return false
+        } else if (other.maskCoeffs != null) return false
 
         return true
     }
@@ -39,6 +44,7 @@ data class VehicleDetection(
         result = 31 * result + className.hashCode()
         result = 31 * result + maskWidth
         result = 31 * result + maskHeight
+        result = 31 * result + (maskCoeffs?.contentHashCode() ?: 0)
         result = 31 * result + (detectionTime?.hashCode() ?: 0)
         return result
     }
