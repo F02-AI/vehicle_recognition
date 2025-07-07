@@ -46,9 +46,22 @@ class VehicleSegmentationProcessor @Inject constructor(
      */
     suspend fun reinitializeDetector(settings: LicensePlateSettings): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Reset initialization state before reinitializing
+            isInitialized = false
+            
+            // Clear any existing state
+            _detectedVehicles.value = emptyList()
+            _isProcessing.value = false
+            
+            // Reinitialize the detector
             val detectorReady = vehicleSegmentationDetector.initialize(settings)
+            
+            // Update the initialization flag based on success
+            isInitialized = detectorReady
+            
             return@withContext detectorReady
         } catch (e: Exception) {
+            isInitialized = false
             false
         }
     }
@@ -62,8 +75,12 @@ class VehicleSegmentationProcessor @Inject constructor(
         settings: LicensePlateSettings
     ): VehicleSegmentationResult = withContext(Dispatchers.Default) {
         
-        if (!isInitialized) return@withContext VehicleSegmentationResult(emptyList(), emptyMap(), "")
+        if (!isInitialized) {
+            android.util.Log.d("VehicleSegProc", "Vehicle segmentation processor not initialized - skipping detection")
+            return@withContext VehicleSegmentationResult(emptyList(), emptyMap(), "Vehicle processor not initialized")
+        }
         
+        android.util.Log.d("VehicleSegProc", "Processing vehicle detection on frame: ${bitmap.width}x${bitmap.height}")
         _isProcessing.value = true
         
         try {
@@ -72,6 +89,11 @@ class VehicleSegmentationProcessor @Inject constructor(
             val vehicleDetections = detectorResult.detections
             val performanceStats = detectorResult.performance
             val rawOutputLog = detectorResult.rawOutputLog
+            
+            android.util.Log.d("VehicleSegProc", "Vehicle detection completed: ${vehicleDetections.size} vehicles found")
+            vehicleDetections.forEachIndexed { index, vehicle ->
+                android.util.Log.d("VehicleSegProc", "Vehicle $index: ${vehicle.className} at ${vehicle.boundingBox} (conf: ${vehicle.confidence})")
+            }
             
             // Step 2: Update state with latest detections
             _detectedVehicles.value = vehicleDetections

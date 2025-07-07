@@ -13,6 +13,8 @@ import com.example.vehiclerecognition.ml.ocr.OcrEngine
 import com.example.vehiclerecognition.ml.ocr.PaddleOcrEngine
 import com.example.vehiclerecognition.ml.ocr.TesseractOcrEngine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -86,6 +88,14 @@ class LicensePlateProcessor @Inject constructor(
      */
     suspend fun reinitializeDetector(settings: LicensePlateSettings): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Reset initialization state before reinitializing
+            isInitialized = false
+            
+            // Clear any existing state
+            _detectedPlates.value = emptyList()
+            _latestRecognizedText.value = null
+            _isProcessing.value = false
+            
             // Reinitialize both detector and OCR engines for GPU acceleration changes
             val detectorReady = licensePlateDetector.initialize(settings)
             val fastPlateReady = fastPlateOcrEngine.initialize(settings)
@@ -93,8 +103,14 @@ class LicensePlateProcessor @Inject constructor(
             val tesseractReady = tesseractOcrEngine.initialize(settings)
             val paddleReady = paddleOcrEngine.initialize(settings)
             
-            return@withContext detectorReady && fastPlateReady && mlKitReady && tesseractReady && paddleReady
+            val allReady = detectorReady && fastPlateReady && mlKitReady && tesseractReady && paddleReady
+            
+            // Update the initialization flag based on success
+            isInitialized = allReady
+            
+            return@withContext allReady
         } catch (e: Exception) {
+            isInitialized = false
             false
         }
     }
@@ -127,41 +143,58 @@ class LicensePlateProcessor @Inject constructor(
                 )
             }
             
-            // Step 3: Process OCR on the best detection if OCR is enabled and detection exists
-            val bestDetection = plateDetections.maxByOrNull { it.confidence }
-            if (bestDetection != null && settings.enableOcr) {
+            // Step 3: Process OCR on ALL detections in parallel if OCR is enabled
+            if (plateDetections.isNotEmpty() && settings.enableOcr) {
+                // Get the appropriate OCR engine
+                val ocrEngine = getOcrEngine(settings.selectedOcrModel)
                 
-                // Crop and scale the license plate region from MAX RESOLUTION for optimal OCR
-                val optimizedCroppedBitmap = cropAndScaleLicensePlateForOCR(bitmap, bestDetection.boundingBox)
-                
-                if (optimizedCroppedBitmap != null) {
-                    // Get the appropriate OCR engine
-                    val ocrEngine = getOcrEngine(settings.selectedOcrModel)
-                    
-                    if (ocrEngine?.isReady() == true) {
-                        val ocrResult = ocrEngine.processImage(optimizedCroppedBitmap)
-                        
-                        // Update the best detection with OCR results
-                        val updatedDetection = bestDetection.copy(
-                            recognizedText = ocrResult.formattedText ?: ocrResult.text,
-                            isValidFormat = ocrResult.isValidFormat,
-                            processingTimeMs = ocrResult.processingTimeMs
-                        )
-                        
-                        // Update the plate detections with the OCR result
-                        val updatedDetections = plateDetections.map { detection ->
-                            if (detection == bestDetection) updatedDetection else detection
+                if (ocrEngine?.isReady() == true) {
+                    // Process all detections in parallel using async
+                    val ocrJobs = plateDetections.map { detection ->
+                        async {
+                            // Crop and scale each license plate region
+                            val optimizedCroppedBitmap = cropAndScaleLicensePlateForOCR(bitmap, detection.boundingBox)
+                            
+                            if (optimizedCroppedBitmap != null) {
+                                try {
+                                    val ocrResult = ocrEngine.processImage(optimizedCroppedBitmap)
+                                    
+                                    // Return updated detection with OCR results
+                                    detection.copy(
+                                        recognizedText = ocrResult.formattedText ?: ocrResult.text,
+                                        isValidFormat = ocrResult.isValidFormat,
+                                        processingTimeMs = ocrResult.processingTimeMs
+                                    )
+                                } catch (e: Exception) {
+                                    // If OCR fails for this plate, return original detection
+                                    detection
+                                }
+                            } else {
+                                // If cropping fails, return original detection
+                                detection
+                            }
                         }
-                        
-                        // Update latest recognized text
-                        _latestRecognizedText.value = ocrResult.formattedText ?: ocrResult.text
-                        
-                        _detectedPlates.value = updatedDetections
-                        return@withContext ProcessorResult(updatedDetections, performanceStats, rawOutputLog)
                     }
+                    
+                    // Wait for all OCR jobs to complete
+                    val updatedDetections = ocrJobs.awaitAll()
+                    
+                    // Update latest recognized text with the best valid result
+                    val bestValidText = updatedDetections
+                        .filter { it.recognizedText?.isNotBlank() == true && it.isValidFormat }
+                        .maxByOrNull { it.confidence }
+                        ?.recognizedText
+                        ?: updatedDetections
+                            .filter { it.recognizedText?.isNotBlank() == true }
+                            .maxByOrNull { it.confidence }
+                            ?.recognizedText
+                    
+                    _latestRecognizedText.value = bestValidText
+                    _detectedPlates.value = updatedDetections
+                    return@withContext ProcessorResult(updatedDetections, performanceStats, rawOutputLog)
                 }
-            } else if (bestDetection != null && !settings.enableOcr) {
-                // OCR is disabled, just return detection without text recognition
+            } else if (plateDetections.isNotEmpty() && !settings.enableOcr) {
+                // OCR is disabled, just return detections without text recognition
                 _latestRecognizedText.value = null
             }
             

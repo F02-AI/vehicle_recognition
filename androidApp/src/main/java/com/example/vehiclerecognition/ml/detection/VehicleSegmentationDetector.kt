@@ -77,7 +77,7 @@ class VehicleSegmentationDetector @Inject constructor(
         private const val MASK_SIZE = 160 // Typical YOLO segmentation mask size
         
         // Vehicle class IDs from COCO dataset
-        private val VEHICLE_CLASS_IDS = setOf(2, 3, 5, 7) // car, motorcycle, bus, truck
+        private val VEHICLE_CLASS_IDS = setOf(2, 3, 7) // car, motorcycle, truck
         
         // Debug info storage
         var lastDebugInfo: String = ""
@@ -188,12 +188,16 @@ class VehicleSegmentationDetector @Inject constructor(
     
     suspend fun detectVehicles(bitmap: Bitmap): VehicleSegmentationResult = withContext(Dispatchers.Default) {
         if (!isInitialized) {
-            return@withContext VehicleSegmentationResult(emptyList(), emptyMap(), "")
+            Log.d(TAG, "VehicleSegmentationDetector not initialized - returning empty result")
+            return@withContext VehicleSegmentationResult(emptyList(), emptyMap(), "Detector not initialized")
         }
+        
+        Log.d(TAG, "Running vehicle detection on ${bitmap.width}x${bitmap.height} bitmap")
         
         try {
             val results = interpreter?.let { tfliteInterpreter ->
                 interpreterMutex.withLock {
+                    Log.d(TAG, "Running TensorFlow Lite inference for vehicle detection")
                     runTensorFlowLiteInference(bitmap, tfliteInterpreter)
                 }
             }
@@ -944,7 +948,7 @@ class VehicleSegmentationDetector @Inject constructor(
      */
     private fun mapRgbToVehicleColor(r: Int, g: Int, b: Int): VehicleColor {
         // More realistic vehicle color references based on common car colors
-        // Using multiple reference points per color to better capture variations
+        // Adjusted to better distinguish white/black from gray
         val predefinedColors = listOf(
             // Red variations
             VehicleColor.RED to Triple(140, 50, 50),      // Dark red
@@ -961,21 +965,24 @@ class VehicleSegmentationDetector @Inject constructor(
             VehicleColor.GREEN to Triple(40, 80, 40),     // Dark green
             VehicleColor.GREEN to Triple(80, 120, 80),    // Lighter green
             
-            // White/Silver variations
-            VehicleColor.WHITE to Triple(220, 220, 220),  // Pure white
-            VehicleColor.WHITE to Triple(200, 200, 200),  // Off-white
-            VehicleColor.WHITE to Triple(240, 240, 240),  // Bright white
+            // White variations - expanded range to capture more white vehicles
+            VehicleColor.WHITE to Triple(235, 235, 235),  // Pure white
+            VehicleColor.WHITE to Triple(210, 210, 210),  // Off-white  
+            VehicleColor.WHITE to Triple(250, 250, 250),  // Bright white
+            VehicleColor.WHITE to Triple(190, 190, 190),  // Slightly dirty white
+            VehicleColor.WHITE to Triple(225, 225, 225),  // Common car white
             
-            // Black variations
-            VehicleColor.BLACK to Triple(40, 40, 40),     // Standard black
-            VehicleColor.BLACK to Triple(25, 25, 25),     // Very dark
-            VehicleColor.BLACK to Triple(60, 60, 60),     // Dark gray-black
+            // Black variations - expanded range to capture more black vehicles
+            VehicleColor.BLACK to Triple(35, 35, 35),     // Standard black
+            VehicleColor.BLACK to Triple(20, 20, 20),     // Very dark
+            VehicleColor.BLACK to Triple(50, 50, 50),     // Dark gray-black
+            VehicleColor.BLACK to Triple(15, 15, 15),     // Deep black
+            VehicleColor.BLACK to Triple(65, 65, 65),     // Charcoal black
             
-            // Gray variations
+            // Gray variations - reduced to narrower mid-range to avoid overlap
             VehicleColor.GRAY to Triple(110, 110, 110),   // Medium gray
-            VehicleColor.GRAY to Triple(90, 90, 90),      // Dark gray
-            VehicleColor.GRAY to Triple(140, 140, 140),   // Light gray
-            VehicleColor.GRAY to Triple(160, 160, 160),   // Silver
+            VehicleColor.GRAY to Triple(130, 130, 130),   // Light-medium gray
+            VehicleColor.GRAY to Triple(85, 85, 85),      // Dark-medium gray
             
             // Yellow/Beige variations
             VehicleColor.YELLOW to Triple(200, 180, 60),  // Golden yellow
@@ -1006,12 +1013,8 @@ class VehicleSegmentationDetector @Inject constructor(
             Log.d(TAG, "  $color: distance=${dist.toInt()}")
         }
         
-        // If the closest color is too far away (distance > 2.0), default to gray
-        if (minDistance > 2.0) {
-            Log.d(TAG, "All colors too far (distance=${minDistance.format(2)}), defaulting to GRAY")
-            return VehicleColor.GRAY
-        }
-        
+        // Removed gray fallback to allow white/black detection even at higher distances
+        // This prevents white/black cars from being misclassified as gray
         return closestColor
     }
     
@@ -1031,10 +1034,13 @@ class VehicleSegmentationDetector @Inject constructor(
         val deltaS = kotlin.math.abs(s1 - s2)
         val deltaV = kotlin.math.abs(v1 - v2)
         
-        // Weighted distance with emphasis on saturation and value for color distinction
-        val hueWeight = if (s1 > 0.1f && s2 > 0.1f) deltaH / 360f * 3f else 0f // Only use hue if colors are saturated
+        // Determine if we're dealing with achromatic colors (low saturation)
+        val isAchromatic = s1 < 0.15f && s2 < 0.15f // Both colors have low saturation
+        
+        // Weighted distance with enhanced brightness sensitivity for white/black/gray distinction
+        val hueWeight = if (s1 > 0.1f && s2 > 0.1f && !isAchromatic) deltaH / 360f * 3f else 0f
         val satWeight = deltaS * 2f // Saturation is important for color distinction
-        val valWeight = deltaV * 1f // Value/brightness
+        val valWeight = if (isAchromatic) deltaV * 2.5f else deltaV * 1f // Increased brightness weight for achromatic colors
         
         return kotlin.math.sqrt(
             hueWeight * hueWeight +

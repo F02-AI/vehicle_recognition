@@ -210,6 +210,7 @@ fun DebugVideoPlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var videoWidth by remember { mutableStateOf(0) }
     var videoHeight by remember { mutableStateOf(0) }
@@ -411,8 +412,11 @@ fun ActualCameraView(
             val frameRotation by cameraViewModel.frameRotation.collectAsState()
             val videoDisplayWidth by cameraViewModel.videoDisplayWidth.collectAsState()
             val videoDisplayHeight by cameraViewModel.videoDisplayHeight.collectAsState()
+            val matchedPlateIds by cameraViewModel.matchedPlateIds.collectAsState()
+            val matchedVehicleIds by cameraViewModel.matchedVehicleIds.collectAsState()
             
             val showDebugInfo by cameraViewModel.showDebugInfo.collectAsState()
+            val textMeasurer = rememberTextMeasurer()
 
             if (showDebugInfo) {
                 // Debug mode indicator
@@ -551,8 +555,6 @@ fun ActualCameraView(
                             Log.d("DebugVideoPlayer", "Overlay Box size: ${coordinates.size.width}x${coordinates.size.height}")
                         }
                 ) {
-                    val textMeasurer = rememberTextMeasurer()
-                    
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         Log.d("DebugVideoPlayer", "Canvas size: ${size.width}x${size.height}")
                         
@@ -567,9 +569,10 @@ fun ActualCameraView(
                                 frameRotation
                             )
                             
-                            // Draw the bounding box in green for license plates
+                            // Draw the bounding box - white by default, green if this plate's text is matched
+                            val boxColor = if (plate.recognizedText != null && matchedPlateIds.contains(plate.recognizedText)) Color.Green else Color.White
                             drawRect(
-                                color = Color.Green,
+                                color = boxColor,
                                 topLeft = rect.topLeft,
                                 size = rect.size,
                                 style = Stroke(width = 3.dp.toPx())
@@ -586,29 +589,17 @@ fun ActualCameraView(
                                 frameRotation
                             )
                             
-                            // Use detected color or fallback to class-based color
-                            val vehicleColor = vehicle.detectedColor?.toComposeColor() ?: when (vehicle.classId) {
-                                2 -> Color.Blue    // Car - Blue
-                                3 -> Color.Cyan    // Motorcycle - Cyan
-                                5 -> Color.Yellow  // Bus - Yellow
-                                7 -> Color.Red     // Truck - Red
-                                else -> Color.Magenta // Unknown - Magenta
-                            }
+                            // Segmentation mask drawing removed per user request
                             
-                            // Draw segmentation mask if available
-                            vehicle.segmentationMask?.let { mask ->
-                                drawSegmentationMask(
-                                    mask = mask,
-                                    maskWidth = vehicle.maskWidth,
-                                    maskHeight = vehicle.maskHeight,
-                                    boundingBox = rect,
-                                    color = vehicleColor.copy(alpha = 0.3f) // Semi-transparent
-                                )
-                            }
+                            // Draw the bounding box - white by default, green if this vehicle is matched
+                            val isMatched = matchedVehicleIds.contains(vehicle.id)
+                            val boxColor = if (isMatched) Color.Green else Color.White
                             
-                            // Draw the bounding box
+                            // Debug logging for vehicle coloring
+                            Log.d("DetectionOverlay", "Vehicle ${vehicle.id}: Primary=${vehicle.detectedColor?.name}, Secondary=${vehicle.secondaryColor?.name}, IsMatched=$isMatched, MatchedSet=$matchedVehicleIds")
+                            
                             drawRect(
-                                color = vehicleColor,
+                                color = boxColor,
                                 topLeft = rect.topLeft,
                                 size = rect.size,
                                 style = Stroke(width = 4.dp.toPx())
@@ -638,20 +629,16 @@ fun ActualCameraView(
                             val textX = rect.left
                             val textY = maxOf(0f, rect.top - textLayoutResult.size.height - 8.dp.toPx())
                             
-                            // Draw background for better text visibility
+                            // Draw background for text
                             drawRect(
                                 color = Color.Black.copy(alpha = 0.7f),
-                                topLeft = Offset(textX, textY),
-                                size = Size(
-                                    textLayoutResult.size.width.toFloat() + 8.dp.toPx(),
-                                    textLayoutResult.size.height.toFloat() + 4.dp.toPx()
-                                )
+                                topLeft = androidx.compose.ui.geometry.Offset(textX, textY),
+                                size = androidx.compose.ui.geometry.Size(textLayoutResult.size.width.toFloat(), textLayoutResult.size.height.toFloat())
                             )
                             
-                            // Draw the text
                             drawText(
                                 textLayoutResult = textLayoutResult,
-                                topLeft = Offset(textX + 4.dp.toPx(), textY + 2.dp.toPx())
+                                topLeft = androidx.compose.ui.geometry.Offset(textX, textY)
                             )
                         }
                     }
@@ -813,6 +800,8 @@ fun ActualCameraView(
         // Only show overlay if we have valid preview dimensions
         if (cameraPreviewWidth > 0 && cameraPreviewHeight > 0 && frameWidth > 0 && frameHeight > 0) {
             val showDebugInfo by cameraViewModel.showDebugInfo.collectAsState()
+            val matchedPlateIds by cameraViewModel.matchedPlateIds.collectAsState()
+            val matchedVehicleIds by cameraViewModel.matchedVehicleIds.collectAsState()
             DetectionOverlay(
                 detectedPlates = detectedPlates,
                 detectedVehicles = detectedVehicles,
@@ -828,7 +817,9 @@ fun ActualCameraView(
                 imageWidth = frameWidth,
                 imageHeight = frameHeight,
                 imageRotation = frameRotation,
-                showDebugInfo = showDebugInfo
+                showDebugInfo = showDebugInfo,
+                matchedPlateIds = matchedPlateIds,
+                matchedVehicleIds = matchedVehicleIds
             )
         }
     }
@@ -851,26 +842,31 @@ fun DetectionOverlay(
     imageWidth: Int,
     imageHeight: Int,
     imageRotation: Int,
-    showDebugInfo: Boolean
+    showDebugInfo: Boolean,
+    matchedPlateIds: Set<String>,
+    matchedVehicleIds: Set<String>
 ) {
     val textMeasurer = rememberTextMeasurer()
     
-    // Variables to store canvas dimensions for use in performance metrics
-    var canvasWidth by remember { mutableStateOf(0f) }
-    var canvasHeight by remember { mutableStateOf(0f) }
-
     Box(modifier = modifier) {
+        // Draw the detection overlay
         Canvas(modifier = Modifier.fillMaxSize()) {
-            Log.d("DetectionOverlay", "Canvas size: ${size.width}x${size.height}")
+            val canvasWidth = size.width
+            val canvasHeight = size.height
             
-            // Update canvas dimensions
-            canvasWidth = size.width
-            canvasHeight = size.height
-            
+            // Draw red border to show the canvas bounds
             if (showDebugInfo) {
-                // Draw corner markers to show canvas bounds
+                val borderWidth = 2.dp.toPx()
+                drawRect(
+                    color = Color.Red,
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                    size = androidx.compose.ui.geometry.Size(canvasWidth, canvasHeight),
+                    style = Stroke(width = borderWidth)
+                )
+                
+                // Draw corner markers
                 val cornerSize = 20.dp.toPx()
-
+                
                 // Top-left corner
                 drawRect(
                     color = Color.Red,
@@ -878,7 +874,7 @@ fun DetectionOverlay(
                     size = androidx.compose.ui.geometry.Size(cornerSize, cornerSize),
                     style = Stroke(width = 3.dp.toPx())
                 )
-
+                
                 // Top-right corner
                 drawRect(
                     color = Color.Red,
@@ -886,7 +882,7 @@ fun DetectionOverlay(
                     size = androidx.compose.ui.geometry.Size(cornerSize, cornerSize),
                     style = Stroke(width = 3.dp.toPx())
                 )
-
+                
                 // Bottom-left corner
                 drawRect(
                     color = Color.Red,
@@ -894,7 +890,7 @@ fun DetectionOverlay(
                     size = androidx.compose.ui.geometry.Size(cornerSize, cornerSize),
                     style = Stroke(width = 3.dp.toPx())
                 )
-
+                
                 // Bottom-right corner
                 drawRect(
                     color = Color.Red,
@@ -915,24 +911,19 @@ fun DetectionOverlay(
                     imageRotation
                 )
                 
-                // Draw the bounding box in green for license plates
+                // Draw the bounding box - white by default, green if this plate's text is matched
+                val boxColor = if (plate.recognizedText != null && matchedPlateIds.contains(plate.recognizedText)) Color.Green else Color.White
                 drawRect(
-                    color = Color.Green,
+                    color = boxColor,
                     topLeft = rect.topLeft,
                     size = rect.size,
                     style = Stroke(width = 2.dp.toPx())
                 )
 
-                // Draw the recognized text and vehicle ID above the box
+                // Draw the recognized text above the box
                 plate.recognizedText?.let { text ->
-                    val plateText = if (plate.vehicleId != null) {
-                        "$text (V:${plate.vehicleId})"
-                    } else {
-                        text
-                    }
-                    
                     val textLayoutResult = textMeasurer.measure(
-                        text = AnnotatedString(plateText),
+                        text = AnnotatedString(text),
                         style = TextStyle(
                             color = Color.White,
                             fontSize = 16.sp,
@@ -956,35 +947,23 @@ fun DetectionOverlay(
                     imageRotation
                 )
                 
-                // Use detected color or fallback to class-based color
-                val vehicleColor = vehicle.detectedColor?.toComposeColor() ?: when (vehicle.classId) {
-                    2 -> Color.Blue    // Car - Blue
-                    3 -> Color.Cyan    // Motorcycle - Cyan
-                    5 -> Color.Yellow  // Bus - Yellow
-                    7 -> Color.Red     // Truck - Red
-                    else -> Color.Magenta // Unknown - Magenta
-                }
+                // Segmentation mask drawing removed per user request
                 
-                // Draw segmentation mask if available
-                vehicle.segmentationMask?.let { mask ->
-                    drawSegmentationMask(
-                        mask = mask,
-                        maskWidth = vehicle.maskWidth,
-                        maskHeight = vehicle.maskHeight,
-                        boundingBox = rect,
-                        color = vehicleColor.copy(alpha = 0.3f) // Semi-transparent
-                    )
-                }
+                // Draw the bounding box - white by default, green if this vehicle is matched
+                val isMatched = matchedVehicleIds.contains(vehicle.id)
+                val boxColor = if (isMatched) Color.Green else Color.White
                 
-                // Draw the bounding box
+                // Debug logging for vehicle coloring
+                Log.d("DetectionOverlay", "Vehicle ${vehicle.id}: Primary=${vehicle.detectedColor?.name}, Secondary=${vehicle.secondaryColor?.name}, IsMatched=$isMatched, MatchedSet=$matchedVehicleIds")
+                
                 drawRect(
-                    color = vehicleColor,
+                    color = boxColor,
                     topLeft = rect.topLeft,
                     size = rect.size,
                     style = Stroke(width = 4.dp.toPx())
                 )
                 
-                // Draw color labels above the bounding box
+                // Draw text labels above the bounding box
                 val vehicleClass = vehicle.className.lowercase()
                 val primaryColorText = vehicle.detectedColor?.name?.lowercase() ?: "no_color"
                 val secondaryColorText = vehicle.secondaryColor?.name?.lowercase()
@@ -1008,20 +987,16 @@ fun DetectionOverlay(
                 val textX = rect.left
                 val textY = maxOf(0f, rect.top - textLayoutResult.size.height - 8.dp.toPx())
                 
-                // Draw background for better text visibility
+                // Draw background for text
                 drawRect(
                     color = Color.Black.copy(alpha = 0.7f),
-                    topLeft = Offset(textX, textY),
-                    size = Size(
-                        textLayoutResult.size.width.toFloat() + 8.dp.toPx(),
-                        textLayoutResult.size.height.toFloat() + 4.dp.toPx()
-                    )
+                    topLeft = androidx.compose.ui.geometry.Offset(textX, textY),
+                    size = androidx.compose.ui.geometry.Size(textLayoutResult.size.width.toFloat(), textLayoutResult.size.height.toFloat())
                 )
                 
-                // Draw the text
                 drawText(
                     textLayoutResult = textLayoutResult,
-                    topLeft = Offset(textX + 4.dp.toPx(), textY + 2.dp.toPx())
+                    topLeft = androidx.compose.ui.geometry.Offset(textX, textY)
                 )
             }
         }
@@ -1046,11 +1021,11 @@ fun DetectionOverlay(
                 // Camera feed coordinates
                 val cameraFeedCoords = """
                     CAMERA FEED CORNERS:
-                    Canvas Size: ${canvasWidth.toInt()}x${canvasHeight.toInt()}
+                    Canvas Size: 1920x1080
                     TL: (0, 0)
-                    TR: (${canvasWidth.toInt()}, 0)
-                    BL: (0, ${canvasHeight.toInt()})
-                    BR: (${canvasWidth.toInt()}, ${canvasHeight.toInt()})
+                    TR: (1920, 0)
+                    BL: (0, 1080)
+                    BR: (1920, 1080)
                 """.trimIndent()
                 
                 // License Plate Detection coordinates
@@ -1058,8 +1033,8 @@ fun DetectionOverlay(
                     val plate = detectedPlates.first()
                     val originalRect = plate.boundingBox
                     val actualTransformedRect = plate.boundingBox.toComposeRect(
-                        canvasWidth,
-                        canvasHeight,
+                        1920f,
+                        1080f,
                         imageWidth,
                         imageHeight,
                         imageRotation
@@ -1072,7 +1047,7 @@ fun DetectionOverlay(
                     Canvas Transformed: (${actualTransformedRect.left.format(1)}, ${actualTransformedRect.top.format(1)}) to (${actualTransformedRect.right.format(1)}, ${actualTransformedRect.bottom.format(1)})
                     Confidence: ${plate.confidence.format(3)}
                     Rect Size: ${(actualTransformedRect.right - actualTransformedRect.left).format(1)} x ${(actualTransformedRect.bottom - actualTransformedRect.top).format(1)}
-                    Vehicle ID: ${plate.vehicleId ?: "Not Assigned"}
+
                     Text: ${plate.recognizedText ?: "Not Recognized"}
                     """.trimIndent()
                 } else {
@@ -1084,8 +1059,8 @@ fun DetectionOverlay(
                     val vehicle = detectedVehicles.first()
                     val originalRect = vehicle.boundingBox
                     val actualTransformedRect = vehicle.boundingBox.toComposeRect(
-                        canvasWidth,
-                        canvasHeight,
+                        1920f,
+                        1080f,
                         imageWidth,
                         imageHeight,
                         imageRotation
@@ -1134,17 +1109,7 @@ fun DetectionOverlay(
                     else -> "\n\nOPTIMIZATION: Full Detection Mode (Both Models Running)"
                 }
                 
-                // License Plate to Vehicle Assignments
-                val assignmentText = if (detectedPlates.isNotEmpty()) {
-                    val assignments = detectedPlates.mapIndexed { index, plate ->
-                        val plateText = plate.recognizedText ?: "LP-$index"
-                        val vehicleId = plate.vehicleId ?: "Unassigned"
-                        "$plateText → Vehicle $vehicleId"
-                    }
-                    "\n\nPLATE-VEHICLE ASSIGNMENTS:\n" + assignments.joinToString("\n")
-                } else {
-                    "\n\nPLATE-VEHICLE ASSIGNMENTS: None"
-                }
+                // License Plate to Vehicle Assignments (removed per user request)
                 
                 // Vehicle Summary Information
                 val vehicleSummaryText = if (detectedVehicles.isNotEmpty()) {
@@ -1164,7 +1129,30 @@ fun DetectionOverlay(
                     "\n\nNO VEHICLES DETECTED"
                 }
                 
+                // Calculate FPS from performance metrics
+                val lpFps = performanceMetrics["Total"]?.let { totalTime ->
+                    if (totalTime > 0) (1000.0 / totalTime).toInt() else 0
+                } ?: 0
+                val vehicleFps = vehiclePerformanceMetrics["Total"]?.let { totalTime ->
+                    if (totalTime > 0) (1000.0 / totalTime).toInt() else 0
+                } ?: 0
+                
+                // GPU acceleration summary
+                val gpuAccelActive = gpuStatus.values.any { it }
+                val gpuSummary = if (gpuAccelActive) "✓ ACTIVE" else "✗ CPU ONLY"
+                
+                // Current detection counts
+                val currentLpCount = detectedPlates.size
+                val currentVehicleCount = detectedVehicles.size
+                
                 val fullText = """
+                    ═══ DEBUG OVERVIEW ═══
+                    📊 CURRENT DETECTIONS: LP: $currentLpCount | Vehicles: $currentVehicleCount
+                    📈 FPS: LP: ${lpFps}fps | Vehicle: ${vehicleFps}fps
+                    🖥️ GPU: $gpuSummary | OCR: ${if (ocrEnabled) "✓ ON" else "✗ OFF"}
+                    📊 TOTAL PROCESSED: LP: $totalDetections | Vehicles: $totalVehicleDetections
+                    
+                    ═══ DETAILED METRICS ═══
                     PERFORMANCE METRICS:
                     $lpMetricsText
                     $vehicleMetricsText
@@ -1184,7 +1172,6 @@ fun DetectionOverlay(
                     $gpuStatusText
                     $ocrStatusText
                     $optimizationStatusText
-                    $assignmentText
                     $vehicleSummaryText
                 """.trimIndent()
                 
@@ -1201,39 +1188,7 @@ fun DetectionOverlay(
     }
 }
 
-/**
- * Extension function to draw segmentation mask overlay
- */
-fun DrawScope.drawSegmentationMask(
-    mask: Array<FloatArray>,
-    maskWidth: Int,
-    maskHeight: Int,
-    boundingBox: androidx.compose.ui.geometry.Rect,
-    color: Color
-) {
-    // Calculate pixel size for each mask cell within the bounding box
-    val cellWidth = boundingBox.width / maskWidth
-    val cellHeight = boundingBox.height / maskHeight
-    
-    // Draw mask pixels
-    for (y in 0 until maskHeight) {
-        for (x in 0 until maskWidth) {
-            val maskValue = mask[y][x]
-            
-            // Lowered threshold to show more mask details
-            if (maskValue > 0.3f) { // Lowered from 0.5f to 0.3f
-                val pixelLeft = boundingBox.left + x * cellWidth
-                val pixelTop = boundingBox.top + y * cellHeight
-                
-                drawRect(
-                    color = color.copy(alpha = (maskValue * 0.8f).coerceIn(0.1f, 0.7f)), // Better alpha scaling
-                    topLeft = Offset(pixelLeft, pixelTop),
-                    size = Size(cellWidth, cellHeight)
-                )
-            }
-        }
-    }
-}
+// Segmentation mask function removed per user request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @androidx.camera.core.ExperimentalGetImage
@@ -1271,13 +1226,22 @@ fun CameraScreen(
             TopAppBar(
                 title = { Text("Vehicle Recognition") },
                 actions = {
-                    // Debug icon hidden as requested
-                    // IconButton(onClick = { viewModel.toggleDebugInfo() }) {
-                    //     Icon(
-                    //         imageVector = if (viewModel.showDebugInfo.collectAsState().value) Icons.Filled.BugReport else Icons.Outlined.BugReport,
-                    //         contentDescription = "Toggle Debug Info"
-                    //     )
-                    // }
+                    // Debug icon for toggling debug overlay - HIDDEN
+                    /*
+                    IconButton(
+                        onClick = { 
+                            Log.d("CameraScreen", "Debug icon clicked!")
+                            viewModel.toggleDebugInfo() 
+                        }
+                    ) {
+                        val showDebug = viewModel.showDebugInfo.collectAsState().value
+                        Icon(
+                            imageVector = if (showDebug) Icons.Filled.BugReport else Icons.Outlined.BugReport,
+                            contentDescription = "Toggle Debug Info",
+                            tint = if (showDebug) Color.Red else Color.Black
+                        )
+                    }
+                    */
                 }
             )
         }
@@ -1289,12 +1253,73 @@ fun CameraScreen(
                         cameraViewModel = viewModel
                     )
                     
+                    // Model status indicator (only when initializing)
+                    val isInitializingModelsSmall by viewModel.isInitializingModels.collectAsState()
+                    
+                    if (isInitializingModelsSmall) {
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFA500).copy(alpha = 0.8f)), // Orange color
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    "Loading...",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                    }
+
+
+                    
                     // Display current zoom ratio from ViewModel for user feedback
                     Text(
                         text = "Zoom: " + "%.1f".format(desiredZoomRatio) + "x",
                         color = Color.White,
                         modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).background(Color.Black.copy(alpha = 0.5f)).padding(4.dp)
                     )
+                    
+
+
+                    // Subtle alert notification for watchlist matches
+                    if (matchFound) {
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.9f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "🚨",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                                Text(
+                                    "Watchlist Match",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                    }
                     
 
                 }
@@ -1312,14 +1337,7 @@ fun CameraScreen(
                 }
             }
 
-            if (matchFound && hasCameraPermission) {
-                Text(
-                    "MATCH FOUND!",
-                    color = Color.Red,
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(8.dp)
-                )
-            }
+
 
 
         }

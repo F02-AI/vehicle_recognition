@@ -75,7 +75,6 @@ data class VehicleSegmentationResult(
 enum class VehicleClass(val id: Int, val displayName: String) {
     CAR(2, "Car"),
     MOTORCYCLE(3, "Motorcycle"), 
-    BUS(5, "Bus"),
     TRUCK(7, "Truck");
     
     companion object {

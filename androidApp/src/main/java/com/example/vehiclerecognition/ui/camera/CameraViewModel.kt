@@ -9,6 +9,7 @@ import com.example.vehiclerecognition.data.repositories.LicensePlateRepository
 import com.example.vehiclerecognition.domain.logic.VehicleMatcher
 import com.example.vehiclerecognition.domain.platform.SoundAlertPlayer
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
+import com.example.vehiclerecognition.domain.repository.WatchlistRepository
 import com.example.vehiclerecognition.model.DetectionMode
 import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
@@ -21,7 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,7 +46,8 @@ class CameraViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val soundAlertPlayer: SoundAlertPlayer,
     private val licensePlateRepository: LicensePlateRepository,
-    private val vehicleSegmentationProcessor: VehicleSegmentationProcessor
+    private val vehicleSegmentationProcessor: VehicleSegmentationProcessor,
+    private val watchlistRepository: WatchlistRepository
 ) : ViewModel() {
 
     // Stores the desired user-facing zoom RATIO (e.g., 1.0f for 1x, 2.0f for 2x)
@@ -57,6 +61,13 @@ class CameraViewModel @Inject constructor(
     // Placeholder for match status
     private val _matchFound = MutableStateFlow<Boolean>(false)
     val matchFound: StateFlow<Boolean> = _matchFound.asStateFlow()
+
+    // Track which specific detections matched the watchlist
+    private val _matchedPlateIds = MutableStateFlow<Set<String>>(emptySet())
+    val matchedPlateIds: StateFlow<Set<String>> = _matchedPlateIds.asStateFlow()
+
+    private val _matchedVehicleIds = MutableStateFlow<Set<String>>(emptySet())
+    val matchedVehicleIds: StateFlow<Set<String>> = _matchedVehicleIds.asStateFlow()
 
     // --- State for CameraScreen ---
     private val _detectedPlates = MutableStateFlow<List<PlateDetection>>(emptyList())
@@ -130,6 +141,22 @@ class CameraViewModel @Inject constructor(
     private var latestFrameToProcess: Bitmap? = null
     private var frameProcessingJob: Job? = null
     private var detectionHideJob: Job? = null
+    
+    // Alert management
+    private var lastAlertTime = 0L
+    private val alertCooldownMs = 5000L // 5 seconds between alerts
+    private var watchlistMatchingJob: Job? = null
+    private var soundAlertJob: Job? = null // Separate job for sound alert management
+    
+    // Model initialization status tracking
+    private val _isInitializingModels = MutableStateFlow(false)
+    val isInitializingModels: StateFlow<Boolean> = _isInitializingModels.asStateFlow()
+    
+    private val _initializationStatus = MutableStateFlow<String>("Ready")
+    val initializationStatus: StateFlow<String> = _initializationStatus.asStateFlow()
+    
+    private val _modelsReady = MutableStateFlow(false)
+    val modelsReady: StateFlow<Boolean> = _modelsReady.asStateFlow()
 
     init {
         Log.d("CameraViewModel","CameraViewModel initialized.")
@@ -143,13 +170,19 @@ class CameraViewModel @Inject constructor(
             Log.d("CameraViewModel", "Initialized zoom ratio from saved settings: ${initialSettings.cameraZoomRatio}")
         }
         
-        // Start collecting settings updates and reinitialize detector when GPU settings change
+        // Observe both license plate settings AND detection mode changes for model reinitialization
         viewModelScope.launch {
             var previousGpuSetting: Boolean? = null
             var previousDetectionMode: DetectionMode? = null
             var isFirstCollection = true
             
-            licensePlateRepository.settings.collect { settings ->
+            // Combine both flows to react to changes in either license plate settings or detection mode
+            kotlinx.coroutines.flow.combine(
+                licensePlateRepository.settings,
+                settingsRepository.detectionMode
+            ) { settings, detectionMode ->
+                Pair(settings, detectionMode)
+            }.collect { (settings, detectionMode) ->
                 _currentSettings.value = settings
                 
                 // Update zoom if it changed in settings (but not if it's the initial load)
@@ -158,67 +191,91 @@ class CameraViewModel @Inject constructor(
                     Log.d("CameraViewModel", "Updated zoom ratio from settings: ${settings.cameraZoomRatio}")
                 }
                 
-                // Initialize detector on first collection, reinitialize on subsequent GPU or detection mode changes
-                val currentDetectionMode = settingsRepository.getDetectionMode()
                 val shouldReinitialize = if (isFirstCollection) {
                     // On first collection, always initialize with actual saved settings
-                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, Mode=$currentDetectionMode, initializing detector")
+                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, Mode=$detectionMode, initializing detector")
                     true
                 } else {
                     // On subsequent collections, reinitialize if GPU setting or detection mode changed
                     val gpuChanged = previousGpuSetting != settings.enableGpuAcceleration
-                    val modeChanged = previousDetectionMode != currentDetectionMode
+                    val modeChanged = previousDetectionMode != detectionMode
                     if (gpuChanged) {
                         Log.d("CameraViewModel", "GPU acceleration setting changed to ${settings.enableGpuAcceleration}, reinitializing detector")
                     }
                     if (modeChanged) {
-                        Log.d("CameraViewModel", "Detection mode changed from $previousDetectionMode to $currentDetectionMode, reinitializing detector")
+                        Log.d("CameraViewModel", "Detection mode changed from $previousDetectionMode to $detectionMode, reinitializing detector")
                     }
                     gpuChanged || modeChanged
                 }
                 
                 if (shouldReinitialize) {
+                    // Set initialization status
+                    _isInitializingModels.value = true
+                    _modelsReady.value = false
+                    
                     if (isFirstCollection) {
-                        Log.d("CameraViewModel", "Initializing detector with saved settings: GPU=${settings.enableGpuAcceleration}")
+                        Log.d("CameraViewModel", "Initializing detector with saved settings: GPU=${settings.enableGpuAcceleration}, Mode=$detectionMode")
+                        _initializationStatus.value = "Initializing models..."
                     } else {
-                        Log.d("CameraViewModel", "GPU acceleration setting changed to ${settings.enableGpuAcceleration}, reinitializing detector")
+                        Log.d("CameraViewModel", "Reinitializing detector due to settings change: GPU=${settings.enableGpuAcceleration}, Mode=$detectionMode")
+                        _initializationStatus.value = "Reinitializing models..."
                     }
                     
                     // Cancel any ongoing frame processing to prevent conflicts
                     frameProcessingJob?.cancel()
                     frameProcessingJob = null
                     
+                    // Reset processing state to ensure frame processing can resume after reinitialization
+                    isCurrentlyProcessing = false
+                    
+                    // Recycle any pending frame since we're reinitializing
+                    latestFrameToProcess?.let { bitmap ->
+                        if (!bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                    }
+                    latestFrameToProcess = null
+                    
+                    // Clear existing detection results to provide immediate visual feedback
+                    _detectedPlates.value = emptyList()
+                    _detectedVehicles.value = emptyList()
+                    _performanceMetrics.value = emptyMap()
+                    _vehiclePerformanceMetrics.value = emptyMap()
+                    _rawOutputLog.value = "Reinitializing models..."
+                    _vehicleRawOutputLog.value = "Reinitializing models..."
+                    
                     // Wait a bit for any ongoing processing to complete
                     delay(100)
                     
                     try {
-                        // Use the detection mode we already retrieved above
-                        val needsLpDetection = needsLicensePlateDetection(currentDetectionMode)
-                        val needsVehicleDetection = needsVehicleDetection(currentDetectionMode)
+                        val needsLpDetection = needsLicensePlateDetection(detectionMode)
+                        val needsVehicleDetection = needsVehicleDetection(detectionMode)
                         
-                        Log.d("CameraViewModel", "Initializing models based on mode $currentDetectionMode - LP: $needsLpDetection, Vehicle: $needsVehicleDetection")
+                        Log.d("CameraViewModel", "Initializing models based on mode $detectionMode - LP: $needsLpDetection, Vehicle: $needsVehicleDetection")
                         
                         // Initialize license plate detection only if needed
                         val licensePlateSuccess = if (needsLpDetection) {
+                            _initializationStatus.value = "Loading license plate model..."
                             if (isFirstCollection) {
                                 licensePlateRepository.initialize()
                             } else {
                                 licensePlateRepository.reinitializeWithSettings(settings)
                             }
                         } else {
-                            Log.d("CameraViewModel", "Skipping license plate model initialization (not needed for mode: $currentDetectionMode)")
+                            Log.d("CameraViewModel", "Skipping license plate model initialization (not needed for mode: $detectionMode)")
                             true // Return success since it's not needed
                         }
                         
                         // Initialize vehicle segmentation processor only if needed
                         val vehicleSegmentationSuccess = if (needsVehicleDetection) {
+                            _initializationStatus.value = "Loading vehicle detection model..."
                             if (isFirstCollection) {
                                 vehicleSegmentationProcessor.initialize(settings)
                             } else {
                                 vehicleSegmentationProcessor.reinitializeDetector(settings)
                             }
                         } else {
-                            Log.d("CameraViewModel", "Skipping vehicle detection model initialization (not needed for mode: $currentDetectionMode)")
+                            Log.d("CameraViewModel", "Skipping vehicle detection model initialization (not needed for mode: $detectionMode)")
                             true // Return success since it's not needed
                         }
                         
@@ -227,16 +284,62 @@ class CameraViewModel @Inject constructor(
                             if (needsLpDetection) enabledModels.add("LP")
                             if (needsVehicleDetection) enabledModels.add("Vehicle")
                             Log.d("CameraViewModel", "Models ${if (isFirstCollection) "initialized" else "reinitialized"} successfully: ${enabledModels.joinToString(", ")} (GPU: ${settings.enableGpuAcceleration})")
+                            
+                            _initializationStatus.value = "Models ready (${enabledModels.joinToString(", ")})"
+                            
+                            // Give models a moment to stabilize after reinitialization
+                            if (!isFirstCollection) {
+                                delay(200)
+                                Log.d("CameraViewModel", "Model stabilization period completed")
+                            }
+                            
+                            _modelsReady.value = true
+                            
+                            // Clear the initialization status after a brief delay
+                            delay(2000)
+                            if (_modelsReady.value) { // Only clear if still ready (no new initialization started)
+                                _initializationStatus.value = "Ready"
+                            }
                         } else {
                             Log.w("CameraViewModel", "Failed to ${if (isFirstCollection) "initialize" else "reinitialize"} detectors - LP: $licensePlateSuccess, VS: $vehicleSegmentationSuccess")
+                            _initializationStatus.value = "Initialization failed"
+                            _modelsReady.value = false
+                            
+                            // Clear detection results on failed initialization
+                            _detectedPlates.value = emptyList()
+                            _detectedVehicles.value = emptyList()
+                            _performanceMetrics.value = emptyMap()
+                            _vehiclePerformanceMetrics.value = emptyMap()
+                            _rawOutputLog.value = "Initialization failed"
+                            _vehicleRawOutputLog.value = "Initialization failed"
+                            
+                            // Clear error status after delay
+                            delay(3000)
+                            _initializationStatus.value = "Ready"
                         }
                     } catch (e: Exception) {
                         Log.e("CameraViewModel", "Error during detector ${if (isFirstCollection) "initialization" else "reinitialization"}", e)
+                        _initializationStatus.value = "Error: ${e.message}"
+                        _modelsReady.value = false
+                        
+                        // Clear detection results on error
+                        _detectedPlates.value = emptyList()
+                        _detectedVehicles.value = emptyList()
+                        _performanceMetrics.value = emptyMap()
+                        _vehiclePerformanceMetrics.value = emptyMap()
+                        _rawOutputLog.value = "Error: ${e.message}"
+                        _vehicleRawOutputLog.value = "Error: ${e.message}"
+                        
+                        // Clear error status after delay
+                        delay(3000)
+                        _initializationStatus.value = "Ready"
+                    } finally {
+                        _isInitializingModels.value = false
                     }
                 }
                 
                 previousGpuSetting = settings.enableGpuAcceleration
-                previousDetectionMode = currentDetectionMode
+                previousDetectionMode = detectionMode
                 isFirstCollection = false
             }
         }
@@ -316,43 +419,63 @@ class CameraViewModel @Inject constructor(
         frameProcessingJob?.cancel() // Cancel any existing processing job
         frameProcessingJob = viewModelScope.launch {
             try {
+                // Skip processing if models are currently initializing
+                if (_isInitializingModels.value) {
+                    Log.d("CameraViewModel", "Skipping frame processing - models are initializing")
+                    return@launch
+                }
+                
                 Log.d("CameraViewModel", "Processing frame: ${bitmap.width}x${bitmap.height}, rotation: $rotation")
                 
                 val currentSettings = _currentSettings.value
                 Log.d("CameraViewModel", "Current settings: confidence=${currentSettings.minConfidenceThreshold}, gpu=${currentSettings.enableGpuAcceleration}")
                 
                 // Get current detection mode to determine which models to run
-                val currentDetectionMode = settingsRepository.getDetectionMode()
+                val currentDetectionMode = settingsRepository.detectionMode.value
                 Log.d("CameraViewModel", "Current detection mode: $currentDetectionMode")
                 
                 // Determine which models need to run based on detection mode
                 val needsLicensePlateDetection = needsLicensePlateDetection(currentDetectionMode)
                 val needsVehicleDetection = needsVehicleDetection(currentDetectionMode)
                 
-                Log.d("CameraViewModel", "Running models - LP: $needsLicensePlateDetection, Vehicle: $needsVehicleDetection")
+                Log.d("CameraViewModel", "Running models in parallel - LP: $needsLicensePlateDetection, Vehicle: $needsVehicleDetection")
 
-                // Process only the required detection models based on settings
-                val lpResult = if (needsLicensePlateDetection) {
-                    licensePlateRepository.processFrame(bitmap, currentSettings)
+                // Process all required detection models in parallel for maximum performance
+                val lpResultDeferred = if (needsLicensePlateDetection) {
+                    async {
+                        Log.d("CameraViewModel", "Starting parallel license plate detection")
+                        licensePlateRepository.processFrame(bitmap, currentSettings)
+                    }
                 } else {
-                    // Return empty result when license plate detection is not needed
-                    com.example.vehiclerecognition.ml.processors.ProcessorResult(
-                        detections = emptyList(),
-                        performance = emptyMap(),
-                        rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
-                    )
+                    async {
+                        // Return empty result when license plate detection is not needed
+                        com.example.vehiclerecognition.ml.processors.ProcessorResult(
+                            detections = emptyList(),
+                            performance = emptyMap(),
+                            rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
+                        )
+                    }
                 }
                 
-                val vehicleResult = if (needsVehicleDetection) {
-                    vehicleSegmentationProcessor.processFrame(bitmap, currentSettings)
+                val vehicleResultDeferred = if (needsVehicleDetection) {
+                    async {
+                        Log.d("CameraViewModel", "Starting parallel vehicle detection and color analysis")
+                        vehicleSegmentationProcessor.processFrame(bitmap, currentSettings)
+                    }
                 } else {
-                    // Return empty result when vehicle detection is not needed
-                    com.example.vehiclerecognition.data.models.VehicleSegmentationResult(
-                        detections = emptyList(),
-                        performance = emptyMap(),
-                        rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
-                    )
+                    async {
+                        // Return empty result when vehicle detection is not needed
+                        com.example.vehiclerecognition.data.models.VehicleSegmentationResult(
+                            detections = emptyList(),
+                            performance = emptyMap(),
+                            rawOutputLog = "Skipped (not needed for mode: $currentDetectionMode)"
+                        )
+                    }
                 }
+
+                // Wait for both detection processes to complete
+                val lpResult = lpResultDeferred.await()
+                val vehicleResult = vehicleResultDeferred.await()
 
                 Log.d("CameraViewModel", "LP Detection result: ${lpResult.detections.size} plates found")
                 Log.d("CameraViewModel", "Vehicle Detection result: ${vehicleResult.detections.size} vehicles found")
@@ -402,6 +525,9 @@ class CameraViewModel @Inject constructor(
                 } else {
                     Log.d("CameraViewModel", "Vehicle ID assignment skipped (LP needed: $needsLicensePlateDetection, Vehicle needed: $needsVehicleDetection)")
                 }
+                
+                // Perform comprehensive watchlist matching based on current detection mode
+                performWatchlistMatching(currentDetectionMode)
 
                 // Always show performance metrics in debug mode
                 _performanceMetrics.value = lpResult.performance
@@ -519,6 +645,466 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
+     * Performs comprehensive watchlist matching based on current detections and detection mode
+     */
+    private fun performWatchlistMatching(detectionMode: DetectionMode) {
+        watchlistMatchingJob?.cancel()
+        watchlistMatchingJob = viewModelScope.launch {
+            try {
+                val currentTime = System.currentTimeMillis()
+                val currentPlates = _detectedPlates.value
+                val currentVehicles = _detectedVehicles.value
+                
+                Log.d("CameraViewModel", "=== WATCHLIST MATCHING DEBUG ===")
+                Log.d("CameraViewModel", "Detection Mode: $detectionMode")
+                Log.d("CameraViewModel", "Include Secondary Color: ${settingsRepository.includeSecondaryColor.value}")
+                Log.d("CameraViewModel", "Plates: ${currentPlates.size}, Vehicles: ${currentVehicles.size}")
+                Log.d("CameraViewModel", "=== VEHICLE DETAILS ===")
+                currentVehicles.forEachIndexed { index, vehicle ->
+                    Log.d("CameraViewModel", "Vehicle $index: ID=${vehicle.id}, Primary=${vehicle.detectedColor?.name}, Secondary=${vehicle.secondaryColor?.name}, Type=${vehicle.className}")
+                }
+                Log.d("CameraViewModel", "=== END VEHICLE DETAILS ===")
+                
+                Log.d("CameraViewModel", "Performing watchlist matching - Mode: $detectionMode, Plates: ${currentPlates.size}, Vehicles: ${currentVehicles.size}")
+                
+                // Debug: Show current watchlist
+                val watchlist = watchlistRepository.getAllEntries()
+                Log.d("CameraViewModel", "Current watchlist (${watchlist.size} entries):")
+                watchlist.forEach { entry ->
+                    Log.d("CameraViewModel", "  - LP: ${entry.licensePlate}, Color: ${entry.vehicleColor}, Type: ${entry.vehicleType}")
+                }
+                
+                // Clear previous matches
+                val matchedPlates = mutableSetOf<String>()
+                val matchedVehicles = mutableSetOf<String>()
+                
+                val hasMatch = when (detectionMode) {
+                    DetectionMode.LP -> {
+                        Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_ONLY - checking plates only")
+                        checkLicensePlateOnlyMatches(currentPlates, matchedPlates)
+                    }
+                    DetectionMode.COLOR -> {
+                        Log.d("CameraViewModel", "Matching mode: COLOR_ONLY - checking vehicle colors (including secondary if enabled)")
+                        checkColorOnlyMatches(currentVehicles, matchedVehicles)
+                    }
+                    DetectionMode.COLOR_TYPE -> {
+                        Log.d("CameraViewModel", "Matching mode: COLOR_TYPE - checking vehicle colors+types (including secondary if enabled)")
+                        checkColorTypeMatches(currentVehicles, matchedVehicles)
+                    }
+                    DetectionMode.LP_COLOR -> {
+                        Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_COLOR - checking plate+color combinations")
+                        checkLicensePlateColorMatches(currentPlates, currentVehicles, matchedPlates, matchedVehicles)
+                    }
+                    DetectionMode.LP_TYPE -> {
+                        Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_TYPE - checking plate+type combinations")
+                        checkLicensePlateTypeMatches(currentPlates, currentVehicles, matchedPlates, matchedVehicles)
+                    }
+                    DetectionMode.LP_COLOR_TYPE -> {
+                        Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_COLOR_TYPE - checking plate+color+type combinations")
+                        checkLicensePlateColorTypeMatches(currentPlates, currentVehicles, matchedPlates, matchedVehicles)
+                    }
+                }
+                
+                // Update matched detection IDs
+                _matchedPlateIds.value = matchedPlates
+                _matchedVehicleIds.value = matchedVehicles
+                
+                Log.d("CameraViewModel", "=== MATCHING RESULTS ===")
+                Log.d("CameraViewModel", "hasMatch: $hasMatch")
+                Log.d("CameraViewModel", "matchedPlates: $matchedPlates")
+                Log.d("CameraViewModel", "matchedVehicles: $matchedVehicles")
+                Log.d("CameraViewModel", "StateFlow _matchedPlateIds: ${_matchedPlateIds.value}")
+                Log.d("CameraViewModel", "StateFlow _matchedVehicleIds: ${_matchedVehicleIds.value}")
+                Log.d("CameraViewModel", "=== END MATCHING RESULTS ===")
+                
+                Log.d("CameraViewModel", "Updated StateFlows - matchedPlates: $matchedPlates, matchedVehicles: $matchedVehicles")
+                Log.d("CameraViewModel", "Current StateFlow values - _matchedPlateIds: ${_matchedPlateIds.value}, _matchedVehicleIds: ${_matchedVehicleIds.value}")
+                
+                if (hasMatch) {
+                    // Always update visual state (green boxes) regardless of alert cooldown
+                    _matchFound.value = true
+                    
+                    // Only trigger sound alert if not in cooldown
+                    val timeSinceLastAlert = currentTime - lastAlertTime
+                    val shouldPlaySound = timeSinceLastAlert >= alertCooldownMs
+                    
+                    Log.d("CameraViewModel", "=== SOUND ALERT DECISION ===")
+                    Log.d("CameraViewModel", "Match found: true")
+                    Log.d("CameraViewModel", "Current time: $currentTime")
+                    Log.d("CameraViewModel", "Last alert time: $lastAlertTime") 
+                    Log.d("CameraViewModel", "Time since last alert: ${timeSinceLastAlert}ms")
+                    Log.d("CameraViewModel", "Cooldown period: ${alertCooldownMs}ms")
+                    Log.d("CameraViewModel", "Should play sound: $shouldPlaySound")
+                    Log.d("CameraViewModel", "=== END SOUND ALERT DECISION ===")
+                    
+                    if (shouldPlaySound) {
+                        triggerWatchlistAlert()
+                        Log.d("CameraViewModel", "WATCHLIST MATCH FOUND! Triggering sound alert")
+                    } else {
+                        Log.d("CameraViewModel", "WATCHLIST MATCH FOUND! Sound alert skipped (in cooldown: ${timeSinceLastAlert}ms < ${alertCooldownMs}ms), but visual state maintained")
+                    }
+                    
+                    // Auto-hide visual match state after 10 seconds if no new matches
+                    hideMatchFoundJob?.cancel()
+                    hideMatchFoundJob = viewModelScope.launch {
+                        delay(10000) // 10 seconds
+                        // Only hide if there are currently no matches (avoid hiding active matches)
+                        val currentDetectionMode = settingsRepository.detectionMode.value
+                        val currentPlatesForCheck = _detectedPlates.value
+                        val currentVehiclesForCheck = _detectedVehicles.value
+                        
+                        // Quick re-check if there are still active matches
+                        val stillHasMatches = when (currentDetectionMode) {
+                            DetectionMode.LP -> currentPlatesForCheck.any { plate ->
+                                plate.recognizedText?.let { plateText ->
+                                    val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
+                                    vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP)
+                                } ?: false
+                            }
+                            else -> {
+                                // For other modes, just check if we still have matched IDs
+                                _matchedPlateIds.value.isNotEmpty() || _matchedVehicleIds.value.isNotEmpty()
+                            }
+                        }
+                        
+                        if (!stillHasMatches) {
+                            _matchFound.value = false
+                            _matchedPlateIds.value = emptySet()
+                            _matchedVehicleIds.value = emptySet()
+                            Log.d("CameraViewModel", "Visual match state auto-hidden after 10 seconds")
+                        } else {
+                            Log.d("CameraViewModel", "Visual match state maintained - still have active matches")
+                        }
+                    }
+                } else {
+                    // Clear matches if no match found
+                    _matchedPlateIds.value = emptySet()
+                    _matchedVehicleIds.value = emptySet()
+                    _matchFound.value = false
+                    hideMatchFoundJob?.cancel() // Cancel auto-hide job since we're clearing manually
+                    Log.d("CameraViewModel", "No matches found - cleared StateFlows")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("CameraViewModel", "Error during watchlist matching", e)
+                // Clear matches on error
+                _matchedPlateIds.value = emptySet()
+                _matchedVehicleIds.value = emptySet()
+            }
+        }
+    }
+
+    /**
+     * Triggers the watchlist match sound alert only
+     */
+    private fun triggerWatchlistAlert() {
+        val currentTime = System.currentTimeMillis()
+        
+        // Double-check cooldown (should already be checked before calling this function)
+        if (currentTime - lastAlertTime < alertCooldownMs) {
+            Log.d("CameraViewModel", "Sound alert skipped - still in cooldown period (${currentTime - lastAlertTime}ms < ${alertCooldownMs}ms)")
+            return
+        }
+        
+        // Update the last alert time BEFORE playing the sound to prevent race conditions
+        lastAlertTime = currentTime
+        
+        Log.d("CameraViewModel", "PLAYING SOUND ALERT - watchlist match detected! Time since last alert: ${currentTime - (lastAlertTime - alertCooldownMs)}ms")
+        
+        // Play sound alert
+        try {
+            soundAlertPlayer.playAlert()
+            Log.d("CameraViewModel", "Sound alert successfully triggered")
+        } catch (e: Exception) {
+            Log.e("CameraViewModel", "Error playing sound alert", e)
+        }
+    }
+
+    /**
+     * Check license plate only matches
+     */
+    private suspend fun checkLicensePlateOnlyMatches(plates: List<PlateDetection>, matchedPlates: MutableSet<String>): Boolean {
+        if (plates.isEmpty()) return false
+        
+        var hasAnyMatch = false
+        
+        for (plate in plates) {
+            plate.recognizedText?.let { plateText ->
+                val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
+                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP)) {
+                    Log.d("CameraViewModel", "LP-only match found: $plateText")
+                    matchedPlates.add(plateText)
+                    hasAnyMatch = true
+                }
+            }
+        }
+        
+        return hasAnyMatch
+    }
+
+    /**
+     * Check color only matches
+     */
+    private suspend fun checkColorOnlyMatches(vehicles: List<VehicleDetection>, matchedVehicles: MutableSet<String>): Boolean {
+        if (vehicles.isEmpty()) return false
+        
+        val includeSecondary = settingsRepository.includeSecondaryColor.value
+        var hasAnyMatch = false
+        
+        Log.d("CameraViewModel", "checkColorOnlyMatches: includeSecondary=$includeSecondary, vehicles=${vehicles.size}")
+        
+        for (vehicle in vehicles) {
+            Log.d("CameraViewModel", "Checking vehicle ${vehicle.id}: Primary=${vehicle.detectedColor?.name}, Secondary=${vehicle.secondaryColor?.name}")
+            
+            // Check primary color
+            vehicle.detectedColor?.let { color ->
+                val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color)
+                Log.d("CameraViewModel", "About to check primary color $color against watchlist for vehicle ${vehicle.id}")
+                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR)) {
+                    Log.d("CameraViewModel", "Color-only match found (primary): $color for vehicle ${vehicle.id}")
+                    matchedVehicles.add(vehicle.id)
+                    hasAnyMatch = true
+                    Log.d("CameraViewModel", "Added vehicle ${vehicle.id} to matched set. Current set: $matchedVehicles")
+                } else {
+                    Log.d("CameraViewModel", "No match for primary color $color for vehicle ${vehicle.id}")
+                }
+            }
+            
+            // Check secondary color if enabled
+            if (includeSecondary) {
+                vehicle.secondaryColor?.let { color ->
+                    val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color)
+                    Log.d("CameraViewModel", "About to check secondary color $color against watchlist for vehicle ${vehicle.id}")
+                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR)) {
+                        Log.d("CameraViewModel", "Color-only match found (secondary): $color for vehicle ${vehicle.id}")
+                        matchedVehicles.add(vehicle.id)
+                        hasAnyMatch = true
+                        Log.d("CameraViewModel", "Added vehicle ${vehicle.id} to matched set (secondary). Current set: $matchedVehicles")
+                    } else {
+                        Log.d("CameraViewModel", "No match for secondary color $color for vehicle ${vehicle.id}")
+                    }
+                } ?: Log.d("CameraViewModel", "Vehicle ${vehicle.id} has no secondary color")
+            } else {
+                Log.d("CameraViewModel", "Secondary color checking disabled")
+            }
+        }
+        
+        Log.d("CameraViewModel", "checkColorOnlyMatches result: hasAnyMatch=$hasAnyMatch, final matched set: $matchedVehicles")
+        return hasAnyMatch
+    }
+
+    /**
+     * Check color + type matches
+     */
+    private suspend fun checkColorTypeMatches(vehicles: List<VehicleDetection>, matchedVehicles: MutableSet<String>): Boolean {
+        if (vehicles.isEmpty()) return false
+        
+        val includeSecondary = settingsRepository.includeSecondaryColor.value
+        var hasAnyMatch = false
+        
+        Log.d("CameraViewModel", "checkColorTypeMatches: includeSecondary=$includeSecondary, vehicles=${vehicles.size}")
+        
+        for (vehicle in vehicles) {
+            val type = convertClassIdToVehicleType(vehicle.classId)
+            
+            Log.d("CameraViewModel", "Checking vehicle ${vehicle.id}: Primary=${vehicle.detectedColor?.name}, Secondary=${vehicle.secondaryColor?.name}, Type=$type")
+            
+            if (type != null) {
+                // Check primary color + type
+                vehicle.detectedColor?.let { color ->
+                    val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color, type = type)
+                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE)) {
+                        Log.d("CameraViewModel", "Color+Type match found (primary): $color + $type for vehicle ${vehicle.id}")
+                        matchedVehicles.add(vehicle.id)
+                        hasAnyMatch = true
+                        Log.d("CameraViewModel", "Added vehicle ${vehicle.id} to matched set (primary color+type). Current set: $matchedVehicles")
+                    }
+                }
+                
+                // Check secondary color + type if enabled
+                if (includeSecondary) {
+                    vehicle.secondaryColor?.let { color ->
+                        val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color, type = type)
+                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE)) {
+                            Log.d("CameraViewModel", "Color+Type match found (secondary): $color + $type for vehicle ${vehicle.id}")
+                            matchedVehicles.add(vehicle.id)
+                            hasAnyMatch = true
+                            Log.d("CameraViewModel", "Added vehicle ${vehicle.id} to matched set (secondary color+type). Current set: $matchedVehicles")
+                        } else {
+                            Log.d("CameraViewModel", "No match for secondary color+type $color + $type for vehicle ${vehicle.id}")
+                        }
+                    } ?: Log.d("CameraViewModel", "Vehicle ${vehicle.id} has no secondary color for type matching")
+                } else {
+                    Log.d("CameraViewModel", "Secondary color+type checking disabled")
+                }
+            } else {
+                Log.d("CameraViewModel", "Vehicle ${vehicle.id} has unknown type (classId=${vehicle.classId})")
+            }
+        }
+        
+        Log.d("CameraViewModel", "checkColorTypeMatches result: hasAnyMatch=$hasAnyMatch, final matched set: $matchedVehicles")
+        return hasAnyMatch
+    }
+
+    /**
+     * Check license plate + color matches (must belong to same vehicle)
+     */
+    private suspend fun checkLicensePlateColorMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
+        if (plates.isEmpty() || vehicles.isEmpty()) return false
+        
+        val includeSecondary = settingsRepository.includeSecondaryColor.value
+        var hasAnyMatch = false
+        
+        for (plate in plates) {
+            plate.vehicleId?.let { vehicleId ->
+                // Find the vehicle with matching ID
+                val matchingVehicle = vehicles.find { it.id == vehicleId }
+                matchingVehicle?.let { vehicle ->
+                    val plateText = plate.recognizedText
+                    
+                    if (plateText != null) {
+                        // Check primary color + license plate
+                        vehicle.detectedColor?.let { color ->
+                            val detectedVehicle = VehicleMatcher.DetectedVehicle(
+                                licensePlate = plateText,
+                                color = color
+                            )
+                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR)) {
+                                Log.d("CameraViewModel", "LP+Color match found (primary): $plateText + $color (Vehicle: $vehicleId)")
+                                matchedPlates.add(plateText)
+                                matchedVehicles.add(vehicle.id)
+                                hasAnyMatch = true
+                            }
+                        }
+                        
+                        // Check secondary color + license plate if enabled
+                        if (includeSecondary) {
+                            vehicle.secondaryColor?.let { color ->
+                                val detectedVehicle = VehicleMatcher.DetectedVehicle(
+                                    licensePlate = plateText,
+                                    color = color
+                                )
+                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR)) {
+                                    Log.d("CameraViewModel", "LP+Color match found (secondary): $plateText + $color (Vehicle: $vehicleId)")
+                                    matchedPlates.add(plateText)
+                                    matchedVehicles.add(vehicle.id)
+                                    hasAnyMatch = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return hasAnyMatch
+    }
+
+    /**
+     * Check license plate + type matches (must belong to same vehicle)
+     */
+    private suspend fun checkLicensePlateTypeMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
+        if (plates.isEmpty() || vehicles.isEmpty()) return false
+        
+        var hasAnyMatch = false
+        
+        for (plate in plates) {
+            plate.vehicleId?.let { vehicleId ->
+                // Find the vehicle with matching ID
+                val matchingVehicle = vehicles.find { it.id == vehicleId }
+                matchingVehicle?.let { vehicle ->
+                    val plateText = plate.recognizedText
+                    val type = convertClassIdToVehicleType(vehicle.classId)
+                    
+                    if (plateText != null && type != null) {
+                        val detectedVehicle = VehicleMatcher.DetectedVehicle(
+                            licensePlate = plateText,
+                            type = type
+                        )
+                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_TYPE)) {
+                            Log.d("CameraViewModel", "LP+Type match found: $plateText + $type (Vehicle: $vehicleId)")
+                            matchedPlates.add(plateText)
+                            matchedVehicles.add(vehicle.id)
+                            hasAnyMatch = true
+                        }
+                    }
+                }
+            }
+        }
+        
+        return hasAnyMatch
+    }
+
+    /**
+     * Check license plate + color + type matches (must belong to same vehicle)
+     */
+    private suspend fun checkLicensePlateColorTypeMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
+        if (plates.isEmpty() || vehicles.isEmpty()) return false
+        
+        val includeSecondary = settingsRepository.includeSecondaryColor.value
+        var hasAnyMatch = false
+        
+        for (plate in plates) {
+            plate.vehicleId?.let { vehicleId ->
+                // Find the vehicle with matching ID
+                val matchingVehicle = vehicles.find { it.id == vehicleId }
+                matchingVehicle?.let { vehicle ->
+                    val plateText = plate.recognizedText
+                    val type = convertClassIdToVehicleType(vehicle.classId)
+                    
+                    if (plateText != null && type != null) {
+                        // Check primary color + license plate + type
+                        vehicle.detectedColor?.let { color ->
+                            val detectedVehicle = VehicleMatcher.DetectedVehicle(
+                                licensePlate = plateText,
+                                color = color,
+                                type = type
+                            )
+                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE)) {
+                                Log.d("CameraViewModel", "LP+Color+Type match found (primary): $plateText + $color + $type (Vehicle: $vehicleId)")
+                                matchedPlates.add(plateText)
+                                matchedVehicles.add(vehicle.id)
+                                hasAnyMatch = true
+                            }
+                        }
+                        
+                        // Check secondary color + license plate + type if enabled
+                        if (includeSecondary) {
+                            vehicle.secondaryColor?.let { color ->
+                                val detectedVehicle = VehicleMatcher.DetectedVehicle(
+                                    licensePlate = plateText,
+                                    color = color,
+                                    type = type
+                                )
+                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE)) {
+                                    Log.d("CameraViewModel", "LP+Color+Type match found (secondary): $plateText + $color + $type (Vehicle: $vehicleId)")
+                                    matchedPlates.add(plateText)
+                                    matchedVehicles.add(vehicle.id)
+                                    hasAnyMatch = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return hasAnyMatch
+    }
+
+    /**
+     * Converts vehicle class ID to VehicleType enum
+     */
+    private fun convertClassIdToVehicleType(classId: Int): VehicleType? {
+        return when (classId) {
+            2 -> VehicleType.CAR
+            3 -> VehicleType.MOTORCYCLE  
+            7 -> VehicleType.TRUCK
+            else -> null
+        }
+    }
+
+    /**
      * Determines if license plate detection is needed based on the current detection mode
      */
     private fun needsLicensePlateDetection(mode: DetectionMode): Boolean {
@@ -582,7 +1168,7 @@ class CameraViewModel @Inject constructor(
         Log.d("CameraViewModel", "Processing detection - LP: $licensePlate, Color: $color, Type: $type")
 
         viewModelScope.launch {
-            val currentDetectionMode = settingsRepository.getDetectionMode()
+            val currentDetectionMode = settingsRepository.detectionMode.value
             val isMatch = vehicleMatcher.findMatch(detectedVehicle, currentDetectionMode)
             _matchFound.value = isMatch
             if (isMatch) {
@@ -638,6 +1224,8 @@ class CameraViewModel @Inject constructor(
         hideMatchFoundJob?.cancel() // Ensure the job is cancelled if ViewModel is cleared
         frameProcessingJob?.cancel() // Cancel frame processing job
         detectionHideJob?.cancel() // Cancel detection hide job
+        soundAlertJob?.cancel() // Cancel sound alert job
+        watchlistMatchingJob?.cancel() // Cancel watchlist matching job
         
         // Recycle any pending frame
         latestFrameToProcess?.let { bitmap ->

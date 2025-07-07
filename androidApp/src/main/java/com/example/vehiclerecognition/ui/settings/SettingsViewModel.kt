@@ -32,6 +32,9 @@ class SettingsViewModel @Inject constructor(
     private val _licensePlateSettings = MutableStateFlow(LicensePlateSettings())
     val licensePlateSettings: StateFlow<LicensePlateSettings> = _licensePlateSettings.asStateFlow()
 
+    // Expose the secondary color setting
+    val includeSecondaryColor: StateFlow<Boolean> = settingsRepository.includeSecondaryColor
+
     init {
         loadSettings()
     }
@@ -62,6 +65,12 @@ class SettingsViewModel @Inject constructor(
     fun updateLicensePlateSettings(settings: LicensePlateSettings) {
         viewModelScope.launch {
             licensePlateRepository.updateSettings(settings)
+        }
+    }
+
+    fun updateIncludeSecondaryColor(includeSecondary: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.saveIncludeSecondaryColor(includeSecondary)
         }
     }
 }

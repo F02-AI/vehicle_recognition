@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -25,6 +26,17 @@ fun DetectionMode.toDisplayString(): String {
     }
 }
 
+// Extension function to check if a detection mode involves color
+fun DetectionMode.involvesColor(): Boolean {
+    return when (this) {
+        DetectionMode.COLOR,
+        DetectionMode.LP_COLOR,
+        DetectionMode.COLOR_TYPE,
+        DetectionMode.LP_COLOR_TYPE -> true
+        else -> false
+    }
+}
+
 // Assuming a ViewModel instance is provided, e.g., via Hilt or a composable factory
 @Composable
 fun SettingsScreen(
@@ -32,6 +44,7 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val licensePlateSettings by viewModel.licensePlateSettings.collectAsState()
+    val includeSecondaryColor by viewModel.includeSecondaryColor.collectAsState()
     
     when (val state = uiState) {
         is SettingsUiState.Loading -> {
@@ -44,8 +57,10 @@ fun SettingsScreen(
                 selectedMode = state.selectedMode,
                 availableModes = state.availableModes,
                 licensePlateSettings = licensePlateSettings,
+                includeSecondaryColor = includeSecondaryColor,
                 onModeSelected = { viewModel.selectDetectionMode(it) },
-                onLicensePlateSettingsChanged = { viewModel.updateLicensePlateSettings(it) }
+                onLicensePlateSettingsChanged = { viewModel.updateLicensePlateSettings(it) },
+                onIncludeSecondaryColorChanged = { viewModel.updateIncludeSecondaryColor(it) }
             )
         }
         is SettingsUiState.Error -> {
@@ -62,8 +77,10 @@ fun SettingsContent(
     selectedMode: DetectionMode,
     availableModes: List<DetectionMode>,
     licensePlateSettings: LicensePlateSettings,
+    includeSecondaryColor: Boolean,
     onModeSelected: (DetectionMode) -> Unit,
-    onLicensePlateSettingsChanged: (LicensePlateSettings) -> Unit
+    onLicensePlateSettingsChanged: (LicensePlateSettings) -> Unit,
+    onIncludeSecondaryColorChanged: (Boolean) -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -113,6 +130,50 @@ fun SettingsContent(
                     }
                 }
             }
+
+            // Secondary Color Search Setting (only show when color-based mode is selected)
+            if (selectedMode.involvesColor()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Color Detection Options:",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Include Secondary Color",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "Also search for secondary vehicle colors in addition to primary colors",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(16.dp))
+                            
+                            Switch(
+                                checked = includeSecondaryColor,
+                                onCheckedChange = onIncludeSecondaryColorChanged
+                            )
+                        }
+                    }
+                }
+            }
             
             // License Plate Recognition Settings - Hidden as requested
             // OcrModelSelector(
@@ -136,8 +197,10 @@ fun SettingsContentPreview() {
             selectedMode = selected,
             availableModes = modes,
             licensePlateSettings = licensePlateSettings,
+            includeSecondaryColor = false,
             onModeSelected = {},
-            onLicensePlateSettingsChanged = {}
+            onLicensePlateSettingsChanged = {},
+            onIncludeSecondaryColorChanged = {}
         )
     }
 } 
