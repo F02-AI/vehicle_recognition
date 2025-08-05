@@ -8,6 +8,8 @@ import android.util.Log
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrResult
 import com.example.vehiclerecognition.ml.processors.NumericPlateValidator
+import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
+import com.example.vehiclerecognition.data.models.Country
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -34,6 +36,7 @@ class FastPlateOcrEngine @Inject constructor(
     private var gpuDelegate: GpuDelegate? = null
     private var isInitialized = false
     private var isUsingGpuAcceleration = false
+    private var currentCountry = Country.ISRAEL // Default to Israel for backward compatibility
     
     companion object {
         private const val TAG = "FastPlateOcrEngine"
@@ -50,6 +53,10 @@ class FastPlateOcrEngine @Inject constructor(
     
     override suspend fun initialize(settings: LicensePlateSettings): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Store the country setting
+            currentCountry = settings.selectedCountry
+            Log.d(TAG, "FastPlate OCR engine initialized with country: ${currentCountry.displayName}")
+            
             // First, clean up any existing resources to avoid conflicts
             release()
             
@@ -155,7 +162,7 @@ class FastPlateOcrEngine @Inject constructor(
                 recognizedDigits.map { it.second }.average().toFloat()
             } else 0.0f
             
-            val formattedText = NumericPlateValidator.validateAndFormatPlate(extractedText)
+            val formattedText = CountryAwarePlateValidator.validateAndFormatPlate(extractedText, currentCountry)
             val isValidFormat = formattedText != null
             
             val processingTime = System.currentTimeMillis() - startTime

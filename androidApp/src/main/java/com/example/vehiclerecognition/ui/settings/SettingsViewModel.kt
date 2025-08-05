@@ -3,7 +3,7 @@ package com.example.vehiclerecognition.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
-import com.example.vehiclerecognition.model.DetectionMode
+import com.example.vehiclerecognition.data.models.DetectionMode
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.repositories.LicensePlateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel

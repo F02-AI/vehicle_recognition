@@ -85,7 +85,7 @@ class VehicleSegmentationProcessor @Inject constructor(
         
         try {
             // Step 1: Detect vehicles using YOLO11 segmentation model
-            val detectorResult = vehicleSegmentationDetector.detectVehicles(bitmap)
+            val detectorResult = vehicleSegmentationDetector.detectVehicles(bitmap, settings)
             val vehicleDetections = detectorResult.detections
             val performanceStats = detectorResult.performance
             val rawOutputLog = detectorResult.rawOutputLog

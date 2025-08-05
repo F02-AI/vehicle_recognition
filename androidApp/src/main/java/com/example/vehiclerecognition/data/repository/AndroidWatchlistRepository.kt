@@ -5,9 +5,13 @@ import com.example.vehiclerecognition.data.db.WatchlistEntryEntity
 import com.example.vehiclerecognition.data.db.toEntity
 import com.example.vehiclerecognition.domain.repository.WatchlistRepository
 import com.example.vehiclerecognition.domain.validation.LicensePlateValidator // FR 1.6
+import com.example.vehiclerecognition.domain.validation.CountryAwareLicensePlateValidator
 import com.example.vehiclerecognition.model.WatchlistEntry
 import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
+import com.example.vehiclerecognition.data.models.Country
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 class AndroidWatchlistRepository(
     private val watchlistDao: WatchlistDao,
@@ -15,12 +19,14 @@ class AndroidWatchlistRepository(
 ) : WatchlistRepository {
 
     override suspend fun addEntry(entry: WatchlistEntry): Boolean {
-        // FR 1.6: Input for the License Plate MUST be validated to ensure it conforms to one of the required Israeli formats
-        // if it's provided. If not provided, it's valid for Color+Type detection modes.
+        // Validate license plate format based on the entry's country
         val licensePlate = entry.licensePlate
-        if (licensePlate != null && !licensePlateValidator.isValid(licensePlate)) {
-            println("AndroidWatchlistRepository: Invalid license plate format for $licensePlate. Entry not added.")
-            return false
+        if (licensePlate != null) {
+            val countryAwareValidator = CountryAwareLicensePlateValidator(entry.country)
+            if (!countryAwareValidator.isValid(licensePlate)) {
+                println("AndroidWatchlistRepository: Invalid license plate format for $licensePlate in ${entry.country.displayName}. Entry not added.")
+                return false
+            }
         }
         try {
             val entityToInsert = entry.toEntity()
@@ -44,18 +50,52 @@ class AndroidWatchlistRepository(
         }
     }
 
-    override suspend fun getAllEntries(): List<WatchlistEntry> {
-        return try {
+    override fun getAllEntries(): Flow<List<WatchlistEntry>> = flow {
+        try {
             val entries = watchlistDao.getAllEntries().map { it.toDomainModel() }
             println("AndroidWatchlistRepository: Retrieved ${entries.size} entries")
-            entries
+            emit(entries)
         } catch (e: Exception) {
             println("AndroidWatchlistRepository: Error getting all entries - ${e.message}")
-            emptyList()
+            emit(emptyList())
+        }
+    }
+    
+    override fun getEntriesByCountry(country: Country): Flow<List<WatchlistEntry>> = flow {
+        try {
+            val entries = watchlistDao.getEntriesByCountry(country.name).map { it.toDomainModel() }
+            println("AndroidWatchlistRepository: Retrieved ${entries.size} entries for country ${country.displayName}")
+            emit(entries)
+        } catch (e: Exception) {
+            println("AndroidWatchlistRepository: Error getting entries for country ${country.displayName} - ${e.message}")
+            emit(emptyList())
         }
     }
 
-    override suspend fun findEntryByLicensePlate(licensePlate: String): WatchlistEntry? {
+    override suspend fun clearAll(): Boolean {
+        return try {
+            val rowsAffected = watchlistDao.clearAll()
+            println("AndroidWatchlistRepository: Cleared all entries, $rowsAffected rows affected")
+            rowsAffected > 0
+        } catch (e: Exception) {
+            println("AndroidWatchlistRepository: Error clearing all entries - ${e.message}")
+            false
+        }
+    }
+    
+    override suspend fun clearByCountry(country: Country): Boolean {
+        return try {
+            val rowsAffected = watchlistDao.clearByCountry(country.name)
+            println("AndroidWatchlistRepository: Cleared ${rowsAffected} entries for country ${country.displayName}")
+            rowsAffected > 0
+        } catch (e: Exception) {
+            println("AndroidWatchlistRepository: Error clearing entries for country ${country.displayName} - ${e.message}")
+            false
+        }
+    }
+    
+    // Legacy methods for backward compatibility
+    suspend fun findEntryByLicensePlate(licensePlate: String): WatchlistEntry? {
         return try {
             val entry = watchlistDao.findEntryByLicensePlate(licensePlate)?.toDomainModel()
             println("AndroidWatchlistRepository: Found entry for LP $licensePlate: $entry")
@@ -66,7 +106,7 @@ class AndroidWatchlistRepository(
         }
     }
 
-    override suspend fun deleteEntryByColorAndType(color: VehicleColor, type: VehicleType): Boolean {
+    suspend fun deleteEntryByColorAndType(color: VehicleColor, type: VehicleType): Boolean {
         try {
             // First, get all entries matching the criteria
             val allEntries = watchlistDao.getAllEntries()

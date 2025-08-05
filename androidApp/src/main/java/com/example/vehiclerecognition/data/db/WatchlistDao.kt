@@ -21,7 +21,19 @@ interface WatchlistDao {
 
     @Query("SELECT * FROM watchlist_entries")
     suspend fun getAllEntries(): List<WatchlistEntryEntity>
+    
+    @Query("SELECT * FROM watchlist_entries WHERE country = :country")
+    suspend fun getEntriesByCountry(country: String): List<WatchlistEntryEntity>
 
     @Query("SELECT * FROM watchlist_entries WHERE licensePlate = :licensePlate LIMIT 1")
     suspend fun findEntryByLicensePlate(licensePlate: String): WatchlistEntryEntity?
+    
+    @Query("SELECT * FROM watchlist_entries WHERE licensePlate = :licensePlate AND country = :country LIMIT 1")
+    suspend fun findEntryByLicensePlateAndCountry(licensePlate: String, country: String): WatchlistEntryEntity?
+    
+    @Query("DELETE FROM watchlist_entries")
+    suspend fun clearAll(): Int
+    
+    @Query("DELETE FROM watchlist_entries WHERE country = :country")
+    suspend fun clearByCountry(country: String): Int
 } 

@@ -1,6 +1,14 @@
 package com.example.vehiclerecognition.data.models
 
 /**
+ * Countries supported for license plate recognition
+ */
+enum class Country(val displayName: String, val flagResourceId: String) {
+    ISRAEL("Israel", "flag_israel"),
+    UK("United Kingdom", "flag_uk")
+}
+
+/**
  * Data class representing license plate recognition settings
  */
 data class LicensePlateSettings(
@@ -12,7 +20,13 @@ data class LicensePlateSettings(
     val enableNumericOnlyMode: Boolean = true,
     val enableIsraeliFormatValidation: Boolean = true,
     val enableDebugVideo: Boolean = false, // Play test video instead of camera feed
-    val cameraZoomRatio: Float = 1.0f // Remember the last camera zoom level
+    val cameraZoomRatio: Float = 1.0f, // Remember the last camera zoom level
+    val selectedCountry: Country = Country.ISRAEL, // Default to Israel for backward compatibility
+    
+    // Vehicle Color Detection Settings
+    val enableGrayFiltering: Boolean = true, // Enable gray color filtering
+    val grayExclusionThreshold: Float = 50.0f, // Percentage threshold to exclude gray (5-95)
+    val enableSecondaryColorDetection: Boolean = true // Enable detection of secondary vehicle colors
 )
 
 /**

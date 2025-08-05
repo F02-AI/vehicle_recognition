@@ -66,3 +66,7 @@ input_videos/*.mp4
 *.mp4
 
 output/
+vehicle_recognition.zip
+models/
+docs/
+*.kt.bak*

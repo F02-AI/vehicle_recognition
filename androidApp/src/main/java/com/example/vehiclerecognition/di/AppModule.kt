@@ -12,6 +12,7 @@ import com.example.vehiclerecognition.domain.platform.SoundAlertPlayer
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
 import com.example.vehiclerecognition.domain.repository.WatchlistRepository
 import com.example.vehiclerecognition.domain.validation.LicensePlateValidator
+import com.example.vehiclerecognition.domain.validation.DefaultLicensePlateValidator
 import com.example.vehiclerecognition.platform.AndroidSoundAlertPlayer
 import dagger.Module
 import dagger.Provides
@@ -31,7 +32,8 @@ object AppModule {
             appContext,
             AppDatabase::class.java,
             "vehicle_recognition_database"
-        ).fallbackToDestructiveMigration()
+        ).addMigrations(AppDatabase.MIGRATION_2_3)
+         .fallbackToDestructiveMigrationOnDowngrade()
          .build()
     }
 
@@ -44,7 +46,7 @@ object AppModule {
     @Provides
     @Singleton
     fun provideLicensePlateValidator(): LicensePlateValidator {
-        return LicensePlateValidator // It's an object
+        return DefaultLicensePlateValidator // It's an object
     }
 
     @Provides

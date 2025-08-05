@@ -10,12 +10,13 @@ import com.example.vehiclerecognition.domain.logic.VehicleMatcher
 import com.example.vehiclerecognition.domain.platform.SoundAlertPlayer
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
 import com.example.vehiclerecognition.domain.repository.WatchlistRepository
-import com.example.vehiclerecognition.model.DetectionMode
+import com.example.vehiclerecognition.data.models.DetectionMode
 import com.example.vehiclerecognition.model.VehicleColor
 import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.data.models.PlateDetection
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.VehicleDetection
+import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.ml.processors.VehicleSegmentationProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -132,6 +133,9 @@ class CameraViewModel @Inject constructor(
     val latestRecognizedText = licensePlateRepository.latestRecognizedText
     val isProcessingLicensePlates = licensePlateRepository.isProcessing
     val licensePlateSettings = licensePlateRepository.settings
+    
+    // First-time setup state
+    val isFirstTimeSetupCompleted = licensePlateRepository.isFirstTimeSetupCompleted
 
     private var hideMatchFoundJob: Job? = null // Job to auto-hide the "MATCH FOUND" message
     
@@ -165,9 +169,14 @@ class CameraViewModel @Inject constructor(
         
         // Initialize zoom with saved value from settings
         viewModelScope.launch {
-            val initialSettings = licensePlateRepository.settings.first()
-            _desiredZoomRatio.value = initialSettings.cameraZoomRatio
-            Log.d("CameraViewModel", "Initialized zoom ratio from saved settings: ${initialSettings.cameraZoomRatio}")
+            try {
+                val initialSettings = licensePlateRepository.settings.first()
+                _desiredZoomRatio.value = initialSettings.cameraZoomRatio
+                Log.d("CameraViewModel", "Initialized zoom ratio from saved settings: ${initialSettings.cameraZoomRatio}")
+            } catch (e: Exception) {
+                Log.e("CameraViewModel", "Error loading initial settings, using default zoom", e)
+                _desiredZoomRatio.value = 1.0f
+            }
         }
         
         // Observe both license plate settings AND detection mode changes for model reinitialization
@@ -183,6 +192,7 @@ class CameraViewModel @Inject constructor(
             ) { settings, detectionMode ->
                 Pair(settings, detectionMode)
             }.collect { (settings, detectionMode) ->
+                try {
                 _currentSettings.value = settings
                 
                 // Update zoom if it changed in settings (but not if it's the initial load)
@@ -341,6 +351,12 @@ class CameraViewModel @Inject constructor(
                 previousGpuSetting = settings.enableGpuAcceleration
                 previousDetectionMode = detectionMode
                 isFirstCollection = false
+                } catch (e: Exception) {
+                    Log.e("CameraViewModel", "Error in settings collection", e)
+                    _initializationStatus.value = "Settings error: ${e.message}"
+                    _modelsReady.value = false
+                    _isInitializingModels.value = false
+                }
             }
         }
         
@@ -667,11 +683,12 @@ class CameraViewModel @Inject constructor(
                 
                 Log.d("CameraViewModel", "Performing watchlist matching - Mode: $detectionMode, Plates: ${currentPlates.size}, Vehicles: ${currentVehicles.size}")
                 
-                // Debug: Show current watchlist
-                val watchlist = watchlistRepository.getAllEntries()
-                Log.d("CameraViewModel", "Current watchlist (${watchlist.size} entries):")
+                // Debug: Show current watchlist (country-specific)
+                val currentCountry = _currentSettings.value.selectedCountry
+                val watchlist = watchlistRepository.getEntriesByCountry(currentCountry).first()
+                Log.d("CameraViewModel", "Current watchlist for ${currentCountry.displayName} (${watchlist.size} entries):")
                 watchlist.forEach { entry ->
-                    Log.d("CameraViewModel", "  - LP: ${entry.licensePlate}, Color: ${entry.vehicleColor}, Type: ${entry.vehicleType}")
+                    Log.d("CameraViewModel", "  - LP: ${entry.licensePlate}, Color: ${entry.vehicleColor}, Type: ${entry.vehicleType}, Country: ${entry.country.displayName}")
                 }
                 
                 // Clear previous matches
@@ -679,11 +696,11 @@ class CameraViewModel @Inject constructor(
                 val matchedVehicles = mutableSetOf<String>()
                 
                 val hasMatch = when (detectionMode) {
-                    DetectionMode.LP -> {
+                    DetectionMode.LP_ONLY -> {
                         Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_ONLY - checking plates only")
                         checkLicensePlateOnlyMatches(currentPlates, matchedPlates)
                     }
-                    DetectionMode.COLOR -> {
+                    DetectionMode.COLOR_ONLY -> {
                         Log.d("CameraViewModel", "Matching mode: COLOR_ONLY - checking vehicle colors (including secondary if enabled)")
                         checkColorOnlyMatches(currentVehicles, matchedVehicles)
                     }
@@ -755,10 +772,10 @@ class CameraViewModel @Inject constructor(
                         
                         // Quick re-check if there are still active matches
                         val stillHasMatches = when (currentDetectionMode) {
-                            DetectionMode.LP -> currentPlatesForCheck.any { plate ->
+                            DetectionMode.LP_ONLY -> currentPlatesForCheck.any { plate ->
                                 plate.recognizedText?.let { plateText ->
                                     val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
-                                    vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP)
+                                    vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_ONLY, currentCountry)
                                 } ?: false
                             }
                             else -> {
@@ -826,12 +843,13 @@ class CameraViewModel @Inject constructor(
     private suspend fun checkLicensePlateOnlyMatches(plates: List<PlateDetection>, matchedPlates: MutableSet<String>): Boolean {
         if (plates.isEmpty()) return false
         
+        val currentCountry = _currentSettings.value.selectedCountry
         var hasAnyMatch = false
         
         for (plate in plates) {
             plate.recognizedText?.let { plateText ->
                 val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
-                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP)) {
+                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_ONLY, currentCountry)) {
                     Log.d("CameraViewModel", "LP-only match found: $plateText")
                     matchedPlates.add(plateText)
                     hasAnyMatch = true
@@ -859,8 +877,9 @@ class CameraViewModel @Inject constructor(
             // Check primary color
             vehicle.detectedColor?.let { color ->
                 val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color)
+                val currentCountry = _currentSettings.value.selectedCountry
                 Log.d("CameraViewModel", "About to check primary color $color against watchlist for vehicle ${vehicle.id}")
-                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR)) {
+                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_ONLY, currentCountry)) {
                     Log.d("CameraViewModel", "Color-only match found (primary): $color for vehicle ${vehicle.id}")
                     matchedVehicles.add(vehicle.id)
                     hasAnyMatch = true
@@ -874,8 +893,9 @@ class CameraViewModel @Inject constructor(
             if (includeSecondary) {
                 vehicle.secondaryColor?.let { color ->
                     val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color)
+                    val currentCountry = _currentSettings.value.selectedCountry
                     Log.d("CameraViewModel", "About to check secondary color $color against watchlist for vehicle ${vehicle.id}")
-                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR)) {
+                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_ONLY, currentCountry)) {
                         Log.d("CameraViewModel", "Color-only match found (secondary): $color for vehicle ${vehicle.id}")
                         matchedVehicles.add(vehicle.id)
                         hasAnyMatch = true
@@ -899,6 +919,7 @@ class CameraViewModel @Inject constructor(
     private suspend fun checkColorTypeMatches(vehicles: List<VehicleDetection>, matchedVehicles: MutableSet<String>): Boolean {
         if (vehicles.isEmpty()) return false
         
+        val currentCountry = _currentSettings.value.selectedCountry
         val includeSecondary = settingsRepository.includeSecondaryColor.value
         var hasAnyMatch = false
         
@@ -913,7 +934,7 @@ class CameraViewModel @Inject constructor(
                 // Check primary color + type
                 vehicle.detectedColor?.let { color ->
                     val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color, type = type)
-                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE)) {
+                    if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE, currentCountry)) {
                         Log.d("CameraViewModel", "Color+Type match found (primary): $color + $type for vehicle ${vehicle.id}")
                         matchedVehicles.add(vehicle.id)
                         hasAnyMatch = true
@@ -925,7 +946,7 @@ class CameraViewModel @Inject constructor(
                 if (includeSecondary) {
                     vehicle.secondaryColor?.let { color ->
                         val detectedVehicle = VehicleMatcher.DetectedVehicle(color = color, type = type)
-                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE)) {
+                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.COLOR_TYPE, currentCountry)) {
                             Log.d("CameraViewModel", "Color+Type match found (secondary): $color + $type for vehicle ${vehicle.id}")
                             matchedVehicles.add(vehicle.id)
                             hasAnyMatch = true
@@ -952,6 +973,7 @@ class CameraViewModel @Inject constructor(
     private suspend fun checkLicensePlateColorMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
         if (plates.isEmpty() || vehicles.isEmpty()) return false
         
+        val currentCountry = _currentSettings.value.selectedCountry
         val includeSecondary = settingsRepository.includeSecondaryColor.value
         var hasAnyMatch = false
         
@@ -969,7 +991,7 @@ class CameraViewModel @Inject constructor(
                                 licensePlate = plateText,
                                 color = color
                             )
-                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR)) {
+                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR, currentCountry)) {
                                 Log.d("CameraViewModel", "LP+Color match found (primary): $plateText + $color (Vehicle: $vehicleId)")
                                 matchedPlates.add(plateText)
                                 matchedVehicles.add(vehicle.id)
@@ -984,7 +1006,7 @@ class CameraViewModel @Inject constructor(
                                     licensePlate = plateText,
                                     color = color
                                 )
-                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR)) {
+                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR, currentCountry)) {
                                     Log.d("CameraViewModel", "LP+Color match found (secondary): $plateText + $color (Vehicle: $vehicleId)")
                                     matchedPlates.add(plateText)
                                     matchedVehicles.add(vehicle.id)
@@ -1006,6 +1028,7 @@ class CameraViewModel @Inject constructor(
     private suspend fun checkLicensePlateTypeMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
         if (plates.isEmpty() || vehicles.isEmpty()) return false
         
+        val currentCountry = _currentSettings.value.selectedCountry
         var hasAnyMatch = false
         
         for (plate in plates) {
@@ -1021,7 +1044,7 @@ class CameraViewModel @Inject constructor(
                             licensePlate = plateText,
                             type = type
                         )
-                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_TYPE)) {
+                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_TYPE, currentCountry)) {
                             Log.d("CameraViewModel", "LP+Type match found: $plateText + $type (Vehicle: $vehicleId)")
                             matchedPlates.add(plateText)
                             matchedVehicles.add(vehicle.id)
@@ -1041,6 +1064,7 @@ class CameraViewModel @Inject constructor(
     private suspend fun checkLicensePlateColorTypeMatches(plates: List<PlateDetection>, vehicles: List<VehicleDetection>, matchedPlates: MutableSet<String>, matchedVehicles: MutableSet<String>): Boolean {
         if (plates.isEmpty() || vehicles.isEmpty()) return false
         
+        val currentCountry = _currentSettings.value.selectedCountry
         val includeSecondary = settingsRepository.includeSecondaryColor.value
         var hasAnyMatch = false
         
@@ -1060,7 +1084,7 @@ class CameraViewModel @Inject constructor(
                                 color = color,
                                 type = type
                             )
-                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE)) {
+                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE, currentCountry)) {
                                 Log.d("CameraViewModel", "LP+Color+Type match found (primary): $plateText + $color + $type (Vehicle: $vehicleId)")
                                 matchedPlates.add(plateText)
                                 matchedVehicles.add(vehicle.id)
@@ -1076,7 +1100,7 @@ class CameraViewModel @Inject constructor(
                                     color = color,
                                     type = type
                                 )
-                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE)) {
+                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE, currentCountry)) {
                                     Log.d("CameraViewModel", "LP+Color+Type match found (secondary): $plateText + $color + $type (Vehicle: $vehicleId)")
                                     matchedPlates.add(plateText)
                                     matchedVehicles.add(vehicle.id)
@@ -1109,13 +1133,13 @@ class CameraViewModel @Inject constructor(
      */
     private fun needsLicensePlateDetection(mode: DetectionMode): Boolean {
         return when (mode) {
-            DetectionMode.LP,           // License Plate only
+            DetectionMode.LP_ONLY,           // License Plate only
             DetectionMode.LP_COLOR,     // License Plate + Color
             DetectionMode.LP_TYPE,      // License Plate + Type
             DetectionMode.LP_COLOR_TYPE // License Plate + Color + Type
             -> true
             DetectionMode.COLOR_TYPE,   // Color + Type (no LP needed)
-            DetectionMode.COLOR         // Color only (no LP needed)
+            DetectionMode.COLOR_ONLY         // Color only (no LP needed)
             -> false
         }
     }
@@ -1129,9 +1153,9 @@ class CameraViewModel @Inject constructor(
             DetectionMode.LP_TYPE,      // License Plate + Type
             DetectionMode.LP_COLOR_TYPE,// License Plate + Color + Type
             DetectionMode.COLOR_TYPE,   // Color + Type
-            DetectionMode.COLOR         // Color only
+            DetectionMode.COLOR_ONLY         // Color only
             -> true
-            DetectionMode.LP            // License Plate only (no vehicle detection needed)
+            DetectionMode.LP_ONLY            // License Plate only (no vehicle detection needed)
             -> false
         }
     }
@@ -1217,6 +1241,27 @@ class CameraViewModel @Inject constructor(
      */
     fun toggleDebugInfo() {
         _showDebugInfo.value = !_showDebugInfo.value
+    }
+    
+    /**
+     * Completes first-time setup with selected country
+     */
+    fun completeFirstTimeSetup(selectedCountry: Country) {
+        viewModelScope.launch {
+            try {
+                // Update the country setting
+                val currentSettings = licensePlateSettings.first()
+                val updatedSettings = currentSettings.copy(selectedCountry = selectedCountry)
+                licensePlateRepository.updateSettings(updatedSettings)
+                
+                // Mark first-time setup as completed
+                licensePlateRepository.completeFirstTimeSetup()
+                
+                Log.d("CameraViewModel", "First-time setup completed with country: ${selectedCountry.displayName}")
+            } catch (e: Exception) {
+                Log.e("CameraViewModel", "Error completing first-time setup", e)
+            }
+        }
     }
 
     override fun onCleared() {

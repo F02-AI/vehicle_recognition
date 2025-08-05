@@ -77,6 +77,9 @@ import android.view.TextureView
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.lifecycle.LifecycleOwner
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.vehiclerecognition.ui.setup.CountrySelectionScreen
 
 /**
  * Converts an Android Graphics RectF to a Compose Geometry Rect.
@@ -1200,6 +1203,10 @@ fun CameraScreen(
     val matchFound by viewModel.matchFound.collectAsState()
     val desiredZoomRatio by viewModel.desiredZoomRatio.collectAsState()
     val context = LocalContext.current
+    
+    // Check first-time setup status through viewModel
+    val isFirstTimeSetupCompleted by viewModel.isFirstTimeSetupCompleted.collectAsState(initial = false)
+    val showCountrySelection = !isFirstTimeSetupCompleted
 
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -1247,7 +1254,15 @@ fun CameraScreen(
         }
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-            if (hasCameraPermission) {
+            
+            // Show country selection for first-time setup
+            if (hasCameraPermission && showCountrySelection) {
+                CountrySelectionScreen(
+                    onCountrySelected = { country ->
+                        viewModel.completeFirstTimeSetup(country)
+                    }
+                )
+            } else if (hasCameraPermission) {
                 Box(modifier = Modifier.weight(1f)) {
                     ActualCameraView(
                         cameraViewModel = viewModel

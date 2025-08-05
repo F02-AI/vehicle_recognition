@@ -3,7 +3,10 @@ package com.example.vehiclerecognition.ml.ocr
 import android.graphics.Bitmap
 import android.util.Log
 import com.example.vehiclerecognition.data.models.OcrResult
+import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.ml.processors.NumericPlateValidator
+import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
+import com.example.vehiclerecognition.data.models.Country
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -27,6 +30,7 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
     
     private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private var isInitialized = false
+    private var currentCountry = Country.ISRAEL // Default to Israel for backward compatibility
     
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -38,6 +42,12 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
             isInitialized = false
             false
         }
+    }
+    
+    override suspend fun initialize(settings: LicensePlateSettings): Boolean {
+        currentCountry = settings.selectedCountry
+        Log.d(TAG, "ML Kit OCR engine initialized with country: ${currentCountry.displayName}")
+        return initialize()
     }
     
     override suspend fun processImage(bitmap: Bitmap): OcrResult = withContext(Dispatchers.Main) {
@@ -64,19 +74,19 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
                     }
             }
             
-            // Apply numeric-only filtering and Israeli license plate validation
-            val numericText = NumericPlateValidator.extractNumericOnly(result)
-            val formattedText = NumericPlateValidator.validateAndFormatPlate(numericText)
+            // Apply country-specific validation
+            val relevantText = CountryAwarePlateValidator.extractRelevantCharacters(result, currentCountry)
+            val formattedText = CountryAwarePlateValidator.validateAndFormatPlate(relevantText, currentCountry)
             val isValidFormat = formattedText != null
             
             val processingTime = System.currentTimeMillis() - startTime
             
             Log.d(TAG, "OCR processing completed in ${processingTime}ms")
-            Log.d(TAG, "Extracted numeric text: '$numericText', formatted: '$formattedText', valid: $isValidFormat")
+            Log.d(TAG, "Extracted text for ${currentCountry.displayName}: '$relevantText', formatted: '$formattedText', valid: $isValidFormat")
             
             OcrResult(
-                text = numericText,
-                confidence = if (numericText.isNotEmpty()) calculateConfidence(result, numericText) else 0.0f,
+                text = relevantText,
+                confidence = if (relevantText.isNotEmpty()) calculateConfidence(result, relevantText) else 0.0f,
                 isValidFormat = isValidFormat,
                 formattedText = formattedText,
                 processingTimeMs = processingTime

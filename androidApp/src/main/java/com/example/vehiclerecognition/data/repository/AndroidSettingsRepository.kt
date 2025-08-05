@@ -3,7 +3,7 @@ package com.example.vehiclerecognition.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
-import com.example.vehiclerecognition.model.DetectionMode
+import com.example.vehiclerecognition.data.models.DetectionMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +26,7 @@ class AndroidSettingsRepository(
     }
 
     // StateFlow for detection mode changes
-    private val _detectionMode = MutableStateFlow(DetectionMode.LP)
+    private val _detectionMode = MutableStateFlow(DetectionMode.LP_ONLY)
     override val detectionMode: StateFlow<DetectionMode> = _detectionMode.asStateFlow()
 
     // StateFlow for secondary color search setting changes
@@ -35,12 +35,12 @@ class AndroidSettingsRepository(
 
     init {
         // Load initial detection mode from SharedPreferences
-        val savedModeName = sharedPreferences.getString(KEY_DETECTION_MODE, DetectionMode.LP.name)
+        val savedModeName = sharedPreferences.getString(KEY_DETECTION_MODE, DetectionMode.LP_ONLY.name)
         val initialMode = try {
-            DetectionMode.valueOf(savedModeName ?: DetectionMode.LP.name)
+            DetectionMode.valueOf(savedModeName ?: DetectionMode.LP_ONLY.name)
         } catch (e: IllegalArgumentException) {
-            println("AndroidSettingsRepository: Invalid mode name '$savedModeName' in SharedPreferences, defaulting to LP.")
-            DetectionMode.LP // Default to LP if the saved value is somehow invalid
+            println("AndroidSettingsRepository: Invalid mode name '$savedModeName' in SharedPreferences, defaulting to LP_ONLY.")
+            DetectionMode.LP_ONLY // Default to LP_ONLY if the saved value is somehow invalid
         }
         _detectionMode.value = initialMode
         println("AndroidSettingsRepository: Initialized with detection mode: $initialMode")
@@ -64,12 +64,12 @@ class AndroidSettingsRepository(
 
     override suspend fun getDetectionMode(): DetectionMode {
         return withContext(Dispatchers.IO) { // Perform disk I/O on a background thread
-            val savedModeName = sharedPreferences.getString(KEY_DETECTION_MODE, DetectionMode.LP.name)
+            val savedModeName = sharedPreferences.getString(KEY_DETECTION_MODE, DetectionMode.LP_ONLY.name)
             val mode = try {
-                DetectionMode.valueOf(savedModeName ?: DetectionMode.LP.name)
+                DetectionMode.valueOf(savedModeName ?: DetectionMode.LP_ONLY.name)
             } catch (e: IllegalArgumentException) {
-                println("AndroidSettingsRepository: Invalid mode name '$savedModeName' in SharedPreferences, defaulting to LP.")
-                DetectionMode.LP // Default to LP if the saved value is somehow invalid
+                println("AndroidSettingsRepository: Invalid mode name '$savedModeName' in SharedPreferences, defaulting to LP_ONLY.")
+                DetectionMode.LP_ONLY // Default to LP_ONLY if the saved value is somehow invalid
             }
             println("AndroidSettingsRepository: Retrieved detection mode from SharedPreferences: $mode")
             mode

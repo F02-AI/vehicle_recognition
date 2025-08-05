@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
 import com.example.vehiclerecognition.data.models.PlateDetection
+import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.ml.processors.LicensePlateProcessor
 import com.example.vehiclerecognition.ml.processors.ProcessorResult
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -46,6 +47,13 @@ class LicensePlateRepository @Inject constructor(
         private val ISRAELI_FORMAT_VALIDATION_KEY = booleanPreferencesKey("israeli_format_validation")
         private val ENABLE_DEBUG_VIDEO_KEY = booleanPreferencesKey("enable_debug_video")
         private val CAMERA_ZOOM_RATIO_KEY = floatPreferencesKey("camera_zoom_ratio")
+        private val SELECTED_COUNTRY_KEY = stringPreferencesKey("selected_country")
+        
+        // Vehicle Color Detection Settings
+        private val ENABLE_GRAY_FILTERING_KEY = booleanPreferencesKey("enable_gray_filtering")
+        private val GRAY_EXCLUSION_THRESHOLD_KEY = floatPreferencesKey("gray_exclusion_threshold")
+        private val ENABLE_SECONDARY_COLOR_DETECTION_KEY = booleanPreferencesKey("enable_secondary_color_detection")
+        private val FIRST_TIME_SETUP_COMPLETED_KEY = booleanPreferencesKey("first_time_setup_completed")
     }
     
     /**
@@ -67,7 +75,17 @@ class LicensePlateRepository @Inject constructor(
             enableNumericOnlyMode = preferences[NUMERIC_ONLY_MODE_KEY] ?: true,
             enableIsraeliFormatValidation = preferences[ISRAELI_FORMAT_VALIDATION_KEY] ?: true,
             enableDebugVideo = preferences[ENABLE_DEBUG_VIDEO_KEY] ?: false,
-            cameraZoomRatio = preferences[CAMERA_ZOOM_RATIO_KEY] ?: 1.0f
+            cameraZoomRatio = preferences[CAMERA_ZOOM_RATIO_KEY] ?: 1.0f,
+            selectedCountry = try {
+                Country.valueOf(preferences[SELECTED_COUNTRY_KEY] ?: Country.ISRAEL.name)
+            } catch (e: IllegalArgumentException) {
+                Country.ISRAEL
+            },
+            
+            // Vehicle Color Detection Settings
+            enableGrayFiltering = preferences[ENABLE_GRAY_FILTERING_KEY] ?: true,
+            grayExclusionThreshold = preferences[GRAY_EXCLUSION_THRESHOLD_KEY] ?: 50.0f,
+            enableSecondaryColorDetection = preferences[ENABLE_SECONDARY_COLOR_DETECTION_KEY] ?: true
         )
     }
     
@@ -85,6 +103,12 @@ class LicensePlateRepository @Inject constructor(
             preferences[ISRAELI_FORMAT_VALIDATION_KEY] = settings.enableIsraeliFormatValidation
             preferences[ENABLE_DEBUG_VIDEO_KEY] = settings.enableDebugVideo
             preferences[CAMERA_ZOOM_RATIO_KEY] = settings.cameraZoomRatio
+            preferences[SELECTED_COUNTRY_KEY] = settings.selectedCountry.name
+            
+            // Vehicle Color Detection Settings
+            preferences[ENABLE_GRAY_FILTERING_KEY] = settings.enableGrayFiltering
+            preferences[GRAY_EXCLUSION_THRESHOLD_KEY] = settings.grayExclusionThreshold
+            preferences[ENABLE_SECONDARY_COLOR_DETECTION_KEY] = settings.enableSecondaryColorDetection
         }
     }
     
@@ -156,4 +180,20 @@ class LicensePlateRepository @Inject constructor(
      * Gets GPU status for debug display
      */
     fun getGpuStatus(): Map<String, Boolean> = licensePlateProcessor.getGpuStatus()
+    
+    /**
+     * Checks if first-time setup has been completed
+     */
+    val isFirstTimeSetupCompleted: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[FIRST_TIME_SETUP_COMPLETED_KEY] ?: false
+    }
+    
+    /**
+     * Marks first-time setup as completed
+     */
+    suspend fun completeFirstTimeSetup() {
+        dataStore.edit { preferences ->
+            preferences[FIRST_TIME_SETUP_COMPLETED_KEY] = true
+        }
+    }
 } 
