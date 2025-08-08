@@ -16,4 +16,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "vehicle_recognition"
 include(":androidApp")
-include(":shared")

@@ -22,7 +22,7 @@ import com.example.vehiclerecognition.data.models.DetectionMode
 
 // Extension function to get the display string for DetectionMode
 fun DetectionMode.toDisplayString(): String {
-    return this.name.split('_').joinToString(" + ") { part ->
+    return this.name.split('_').joinToString(" ") { part ->
         when (part) {
             "LP" -> "LP"
             else -> part.lowercase().replaceFirstChar { it.uppercase() }

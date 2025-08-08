@@ -26,10 +26,16 @@ class AndroidSoundAlertPlayer(
     // Use SupervisorJob so that a failure in one coroutine doesn't cancel the scope
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var isPlayingPreventRepeat = false
+    private var isEnabled = true
     private val alertDurationMillis = 2000L // FR 1.13: 2 seconds
     private val cooldownMillis = 500L // FR 1.14: Cooldown to prevent immediate re-trigger
 
     override fun playAlert() {
+        if (!isEnabled) {
+            Log.d("SoundAlertPlayer", "Sound alerts are disabled")
+            return
+        }
+        
         if (isPlayingPreventRepeat) {
             Log.d("SoundAlertPlayer", "Alert already playing or in cooldown. Skipping.")
             return
@@ -92,6 +98,11 @@ class AndroidSoundAlertPlayer(
             }
         }
         // FR 1.15: Alert Non-Dismissible - Handled by not providing a dismiss UI and fixed duration.
+    }
+
+    override fun setEnabled(enabled: Boolean) {
+        isEnabled = enabled
+        Log.d("SoundAlertPlayer", "Sound alerts ${if (enabled) "enabled" else "disabled"}")
     }
 
     // Call this when the owner component is destroyed (e.g., in Application or a long-lived service if needed)

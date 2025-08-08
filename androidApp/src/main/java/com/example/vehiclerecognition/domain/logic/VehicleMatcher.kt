@@ -1,6 +1,8 @@
 package com.example.vehiclerecognition.domain.logic
 
+import android.util.Log
 import com.example.vehiclerecognition.domain.repository.WatchlistRepository
+import com.example.vehiclerecognition.domain.validation.CountryAwareLicensePlateValidator
 import com.example.vehiclerecognition.domain.validation.LicensePlateValidator
 import com.example.vehiclerecognition.data.models.DetectionMode
 import com.example.vehiclerecognition.data.models.Country
@@ -53,7 +55,11 @@ class VehicleMatcher(
             }
             
             // Validate with country-specific validation
-            if (!licensePlateValidator.isValid(detectedVehicle.licensePlate)) {
+            val countryAwareValidator = CountryAwareLicensePlateValidator(country)
+            val isValidPlate = countryAwareValidator.isValid(detectedVehicle.licensePlate)
+            Log.d("VehicleMatcher", "Validating plate '${detectedVehicle.licensePlate}' for ${country.displayName}: $isValidPlate")
+            if (!isValidPlate) {
+                Log.d("VehicleMatcher", "License plate validation failed for ${country.displayName}: ${detectedVehicle.licensePlate}")
                 return false // Invalid format for the current country
             }
         }

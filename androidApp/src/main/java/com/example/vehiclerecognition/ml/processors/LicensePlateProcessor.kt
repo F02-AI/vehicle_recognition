@@ -6,12 +6,10 @@ import android.graphics.RectF
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
 import com.example.vehiclerecognition.data.models.PlateDetection
+import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.ml.detection.LicensePlateDetector
-import com.example.vehiclerecognition.ml.ocr.FastPlateOcrEngine
 import com.example.vehiclerecognition.ml.ocr.MLKitOcrEngine
 import com.example.vehiclerecognition.ml.ocr.OcrEngine
-import com.example.vehiclerecognition.ml.ocr.PaddleOcrEngine
-import com.example.vehiclerecognition.ml.ocr.TesseractOcrEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -38,10 +36,7 @@ data class ProcessorResult(
 @Singleton
 class LicensePlateProcessor @Inject constructor(
     private val licensePlateDetector: LicensePlateDetector,
-    private val fastPlateOcrEngine: FastPlateOcrEngine,
-    private val mlKitOcrEngine: MLKitOcrEngine,
-    private val tesseractOcrEngine: TesseractOcrEngine,
-    private val paddleOcrEngine: PaddleOcrEngine
+    private val mlKitOcrEngine: MLKitOcrEngine
 ) {
     
     companion object {
@@ -69,13 +64,10 @@ class LicensePlateProcessor @Inject constructor(
     suspend fun initialize(settings: LicensePlateSettings): Boolean = withContext(Dispatchers.IO) {
         try {
             val detectorReady = licensePlateDetector.initialize(settings)
-            // Initialize OCR engines with GPU acceleration settings
-            val fastPlateReady = fastPlateOcrEngine.initialize(settings)
+            // Initialize ML Kit OCR engine with GPU acceleration settings
             val mlKitReady = mlKitOcrEngine.initialize(settings)
-            val tesseractReady = tesseractOcrEngine.initialize(settings)
-            val paddleReady = paddleOcrEngine.initialize(settings)
             
-            isInitialized = detectorReady && fastPlateReady && mlKitReady && tesseractReady && paddleReady
+            isInitialized = detectorReady && mlKitReady
             isInitialized
         } catch (e: Exception) {
             isInitialized = false
@@ -96,14 +88,11 @@ class LicensePlateProcessor @Inject constructor(
             _latestRecognizedText.value = null
             _isProcessing.value = false
             
-            // Reinitialize both detector and OCR engines for GPU acceleration changes
+            // Reinitialize detector and ML Kit OCR engine for GPU acceleration changes
             val detectorReady = licensePlateDetector.initialize(settings)
-            val fastPlateReady = fastPlateOcrEngine.initialize(settings)
             val mlKitReady = mlKitOcrEngine.initialize(settings)
-            val tesseractReady = tesseractOcrEngine.initialize(settings)
-            val paddleReady = paddleOcrEngine.initialize(settings)
             
-            val allReady = detectorReady && fastPlateReady && mlKitReady && tesseractReady && paddleReady
+            val allReady = detectorReady && mlKitReady
             
             // Update the initialization flag based on success
             isInitialized = allReady
@@ -145,10 +134,10 @@ class LicensePlateProcessor @Inject constructor(
             
             // Step 3: Process OCR on ALL detections in parallel if OCR is enabled
             if (plateDetections.isNotEmpty() && settings.enableOcr) {
-                // Get the appropriate OCR engine
-                val ocrEngine = getOcrEngine(settings.selectedOcrModel)
+                // Use ML Kit OCR engine (the only supported engine)
+                val ocrEngine = mlKitOcrEngine
                 
-                if (ocrEngine?.isReady() == true) {
+                if (ocrEngine.isReady()) {
                     // Process all detections in parallel using async
                     val ocrJobs = plateDetections.map { detection ->
                         async {
@@ -323,27 +312,14 @@ class LicensePlateProcessor @Inject constructor(
         }
     }
     
-    /**
-     * Gets the appropriate OCR engine based on the selected model type
-     */
-    private fun getOcrEngine(modelType: OcrModelType): OcrEngine? {
-        return when (modelType) {
-            OcrModelType.FAST_PLATE_OCR -> fastPlateOcrEngine
-            OcrModelType.ML_KIT -> mlKitOcrEngine
-            OcrModelType.TESSERACT -> tesseractOcrEngine
-            OcrModelType.PADDLE_OCR -> paddleOcrEngine
-        }
-    }
+
     
     /**
      * Releases all resources
      */
     fun release() {
         licensePlateDetector.release()
-        fastPlateOcrEngine.release()
         mlKitOcrEngine.release()
-        tesseractOcrEngine.release()
-        paddleOcrEngine.release()
         isInitialized = false
     }
     
@@ -355,10 +331,7 @@ class LicensePlateProcessor @Inject constructor(
     fun getGpuStatus(): Map<String, Boolean> {
         return mapOf(
             "Detection" to licensePlateDetector.isUsingGpu(),
-            "FastPlate OCR" to fastPlateOcrEngine.isUsingGpu(),
-            "ML Kit OCR" to mlKitOcrEngine.isUsingGpu(),
-            "Tesseract OCR" to tesseractOcrEngine.isUsingGpu(),
-            "Paddle OCR" to paddleOcrEngine.isUsingGpu()
+            "ML Kit OCR" to mlKitOcrEngine.isUsingGpu()
         )
     }
 } 

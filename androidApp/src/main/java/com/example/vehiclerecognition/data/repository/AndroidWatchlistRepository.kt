@@ -12,6 +12,7 @@ import com.example.vehiclerecognition.model.VehicleType
 import com.example.vehiclerecognition.data.models.Country
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.catch
 
 class AndroidWatchlistRepository(
     private val watchlistDao: WatchlistDao,
@@ -51,25 +52,21 @@ class AndroidWatchlistRepository(
     }
 
     override fun getAllEntries(): Flow<List<WatchlistEntry>> = flow {
-        try {
-            val entries = watchlistDao.getAllEntries().map { it.toDomainModel() }
-            println("AndroidWatchlistRepository: Retrieved ${entries.size} entries")
-            emit(entries)
-        } catch (e: Exception) {
-            println("AndroidWatchlistRepository: Error getting all entries - ${e.message}")
-            emit(emptyList())
-        }
+        val entries = watchlistDao.getAllEntries().map { it.toDomainModel() }
+        println("AndroidWatchlistRepository: Retrieved ${entries.size} entries")
+        emit(entries)
+    }.catch { e ->
+        println("AndroidWatchlistRepository: Error getting all entries - ${e.message}")
+        emit(emptyList())
     }
     
     override fun getEntriesByCountry(country: Country): Flow<List<WatchlistEntry>> = flow {
-        try {
-            val entries = watchlistDao.getEntriesByCountry(country.name).map { it.toDomainModel() }
-            println("AndroidWatchlistRepository: Retrieved ${entries.size} entries for country ${country.displayName}")
-            emit(entries)
-        } catch (e: Exception) {
-            println("AndroidWatchlistRepository: Error getting entries for country ${country.displayName} - ${e.message}")
-            emit(emptyList())
-        }
+        val entries = watchlistDao.getEntriesByCountry(country.name).map { it.toDomainModel() }
+        println("AndroidWatchlistRepository: Retrieved ${entries.size} entries for country ${country.displayName}")
+        emit(entries)
+    }.catch { e ->
+        println("AndroidWatchlistRepository: Error getting entries for country ${country.displayName} - ${e.message}")
+        emit(emptyList())
     }
 
     override suspend fun clearAll(): Boolean {

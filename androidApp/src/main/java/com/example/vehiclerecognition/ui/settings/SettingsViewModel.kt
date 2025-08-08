@@ -1,5 +1,6 @@
 package com.example.vehiclerecognition.ui.settings
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
@@ -64,7 +65,20 @@ class SettingsViewModel @Inject constructor(
 
     fun updateLicensePlateSettings(settings: LicensePlateSettings) {
         viewModelScope.launch {
-            licensePlateRepository.updateSettings(settings)
+            try {
+                val currentSettings = _licensePlateSettings.value
+                Log.d("SettingsViewModel", "Updating settings - Country changing from: ${currentSettings.selectedCountry.displayName} to: ${settings.selectedCountry.displayName}")
+                
+                licensePlateRepository.updateSettings(settings)
+                
+                // DON'T manually reinitialize here - let the automatic flow handle it
+                // The settings change will trigger reinitialization in CameraViewModel's combine flow
+                if (currentSettings.selectedCountry != settings.selectedCountry) {
+                    Log.d("SettingsViewModel", "Country changed, automatic reinitialization will be triggered by settings change")
+                }
+            } catch (e: Exception) {
+                Log.e("SettingsViewModel", "Error updating license plate settings", e)
+            }
         }
     }
 

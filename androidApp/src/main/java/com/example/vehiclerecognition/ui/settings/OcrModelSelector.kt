@@ -55,12 +55,11 @@ fun OcrModelSelector(
                 fontWeight = FontWeight.Bold
             )
             
-            // OCR Model Selection
-            OcrModelDropdown(
-                selectedModel = settings.selectedOcrModel,
-                onModelSelected = { model ->
-                    onSettingsChanged(settings.copy(selectedOcrModel = model))
-                }
+            // OCR Engine (Fixed to ML Kit)
+            Text(
+                text = "OCR Engine: ${settings.selectedOcrModel.displayName}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             
             // Processing Interval Slider

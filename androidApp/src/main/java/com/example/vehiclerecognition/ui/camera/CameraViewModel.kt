@@ -183,6 +183,7 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             var previousGpuSetting: Boolean? = null
             var previousDetectionMode: DetectionMode? = null
+            var previousCountry: Country? = null
             var isFirstCollection = true
             
             // Combine both flows to react to changes in either license plate settings or detection mode
@@ -203,19 +204,23 @@ class CameraViewModel @Inject constructor(
                 
                 val shouldReinitialize = if (isFirstCollection) {
                     // On first collection, always initialize with actual saved settings
-                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, Mode=$detectionMode, initializing detector")
+                    Log.d("CameraViewModel", "First settings collection: GPU=${settings.enableGpuAcceleration}, Mode=$detectionMode, Country=${settings.selectedCountry.displayName}, initializing detector")
                     true
                 } else {
-                    // On subsequent collections, reinitialize if GPU setting or detection mode changed
+                    // On subsequent collections, reinitialize if GPU setting, detection mode, or country changed
                     val gpuChanged = previousGpuSetting != settings.enableGpuAcceleration
                     val modeChanged = previousDetectionMode != detectionMode
+                    val countryChanged = previousCountry != settings.selectedCountry
                     if (gpuChanged) {
                         Log.d("CameraViewModel", "GPU acceleration setting changed to ${settings.enableGpuAcceleration}, reinitializing detector")
                     }
                     if (modeChanged) {
                         Log.d("CameraViewModel", "Detection mode changed from $previousDetectionMode to $detectionMode, reinitializing detector")
                     }
-                    gpuChanged || modeChanged
+                    if (countryChanged) {
+                        Log.d("CameraViewModel", "Country changed from ${previousCountry?.displayName} to ${settings.selectedCountry.displayName}, reinitializing OCR engine")
+                    }
+                    gpuChanged || modeChanged || countryChanged
                 }
                 
                 if (shouldReinitialize) {
@@ -350,6 +355,7 @@ class CameraViewModel @Inject constructor(
                 
                 previousGpuSetting = settings.enableGpuAcceleration
                 previousDetectionMode = detectionMode
+                previousCountry = settings.selectedCountry
                 isFirstCollection = false
                 } catch (e: Exception) {
                     Log.e("CameraViewModel", "Error in settings collection", e)
@@ -794,12 +800,12 @@ class CameraViewModel @Inject constructor(
                         }
                     }
                 } else {
-                    // Clear matches if no match found
+                    // Clear current detection tracking, but DON'T immediately clear visual match state
+                    // Let the 10-second auto-hide timer handle clearing the visual state
                     _matchedPlateIds.value = emptySet()
                     _matchedVehicleIds.value = emptySet()
-                    _matchFound.value = false
-                    hideMatchFoundJob?.cancel() // Cancel auto-hide job since we're clearing manually
-                    Log.d("CameraViewModel", "No matches found - cleared StateFlows")
+                    // DO NOT clear _matchFound.value here - let the 10-second timer handle it
+                    Log.d("CameraViewModel", "No current matches found - cleared detection tracking, but keeping visual state for timer")
                 }
                 
             } catch (e: Exception) {
@@ -1193,13 +1199,36 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             val currentDetectionMode = settingsRepository.detectionMode.value
-            val isMatch = vehicleMatcher.findMatch(detectedVehicle, currentDetectionMode)
-            _matchFound.value = isMatch
+            val currentCountry = _currentSettings.value.selectedCountry
+            val isMatch = vehicleMatcher.findMatch(detectedVehicle, currentDetectionMode, currentCountry)
+            
             if (isMatch) {
                 Log.d("CameraViewModel", "MATCH FOUND based on mode $currentDetectionMode!")
-                soundAlertPlayer.playAlert() // FR 1.12
+                
+                // Use the same timing logic as performWatchlistMatching
+                val currentTime = System.currentTimeMillis()
+                val timeSinceLastAlert = currentTime - lastAlertTime
+                val shouldPlaySound = timeSinceLastAlert >= alertCooldownMs
+                
+                _matchFound.value = true
+                
+                if (shouldPlaySound) {
+                    triggerWatchlistAlert()
+                    Log.d("CameraViewModel", "Sound alert triggered from processDetection")
+                } else {
+                    Log.d("CameraViewModel", "Sound alert skipped from processDetection (cooldown: ${timeSinceLastAlert}ms < ${alertCooldownMs}ms)")
+                }
+                
+                // Start 10-second auto-hide timer
+                hideMatchFoundJob?.cancel()
+                hideMatchFoundJob = viewModelScope.launch {
+                    delay(10000) // 10 seconds
+                    _matchFound.value = false
+                    Log.d("CameraViewModel", "Visual match state auto-hidden after 10 seconds (from processDetection)")
+                }
             } else {
                 Log.d("CameraViewModel", "No match found for mode $currentDetectionMode.")
+                // Don't immediately clear _matchFound - let timer handle it
             }
         }
     }
@@ -1249,15 +1278,23 @@ class CameraViewModel @Inject constructor(
     fun completeFirstTimeSetup(selectedCountry: Country) {
         viewModelScope.launch {
             try {
+                Log.d("CameraViewModel", "Starting first-time setup with country: ${selectedCountry.displayName}")
+                
                 // Update the country setting
                 val currentSettings = licensePlateSettings.first()
                 val updatedSettings = currentSettings.copy(selectedCountry = selectedCountry)
+                Log.d("CameraViewModel", "Current country: ${currentSettings.selectedCountry.displayName}, updating to: ${selectedCountry.displayName}")
+                
                 licensePlateRepository.updateSettings(updatedSettings)
+                
+                // DON'T manually reinitialize here - let the automatic flow handle it
+                // The settings change will trigger reinitialization in the combine flow
+                Log.d("CameraViewModel", "Settings updated, automatic reinitialization will be triggered by settings change")
                 
                 // Mark first-time setup as completed
                 licensePlateRepository.completeFirstTimeSetup()
                 
-                Log.d("CameraViewModel", "First-time setup completed with country: ${selectedCountry.displayName}")
+                Log.d("CameraViewModel", "First-time setup completed successfully with country: ${selectedCountry.displayName}")
             } catch (e: Exception) {
                 Log.e("CameraViewModel", "Error completing first-time setup", e)
             }
