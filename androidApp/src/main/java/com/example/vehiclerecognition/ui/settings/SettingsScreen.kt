@@ -20,14 +20,17 @@ import com.example.vehiclerecognition.data.models.OcrModelType
 import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.data.models.DetectionMode
 
-// Extension function to get the display string for DetectionMode
+// Extension function to get the display string for DetectionMode with proper separators
 fun DetectionMode.toDisplayString(): String {
-    return this.name.split('_').joinToString(" ") { part ->
-        when (part) {
-            "LP" -> "LP"
-            else -> part.lowercase().replaceFirstChar { it.uppercase() }
-        }
+    val parts: List<String> = when (this) {
+        DetectionMode.LP_ONLY -> listOf("LP")
+        DetectionMode.COLOR_ONLY -> listOf("Color")
+        DetectionMode.COLOR_TYPE -> listOf("Color", "Type")
+        DetectionMode.LP_COLOR -> listOf("LP", "Color")
+        DetectionMode.LP_TYPE -> listOf("LP", "Type")
+        DetectionMode.LP_COLOR_TYPE -> listOf("LP", "Color", "Type")
     }
+    return if (parts.size == 1) parts.first() else parts.joinToString(" + ")
 }
 
 // Extension function to check if a detection mode involves color
@@ -271,6 +274,53 @@ fun SettingsContent(
                         }
 
 
+                    }
+                }
+            }
+
+            // Advanced OCR Post-processing Settings
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Advanced OCR Settings:",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    // Enable Plate Candidate Generation Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Robust LP correction",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Generate and validate multiple LP candidates by fixing common OCR confusions (e.g., 0/O, 1/I, 5/S)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Switch(
+                            checked = licensePlateSettings.enablePlateCandidateGeneration,
+                            onCheckedChange = { enabled ->
+                                onLicensePlateSettingsChanged(
+                                    licensePlateSettings.copy(enablePlateCandidateGeneration = enabled)
+                                )
+                            }
+                        )
                     }
                 }
             }

@@ -22,6 +22,7 @@ data class LicensePlateSettings(
     val enableDebugVideo: Boolean = false, // Play test video instead of camera feed
     val cameraZoomRatio: Float = 1.0f, // Remember the last camera zoom level
     val selectedCountry: Country = Country.ISRAEL, // Default to Israel for backward compatibility
+    val enablePlateCandidateGeneration: Boolean = true, // Enable OCR candidate correction
     
     // Vehicle Color Detection Settings
     val enableGrayFiltering: Boolean = true, // Enable gray color filtering

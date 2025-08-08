@@ -4,6 +4,8 @@ import android.util.Log
 import com.example.vehiclerecognition.domain.repository.WatchlistRepository
 import com.example.vehiclerecognition.domain.validation.CountryAwareLicensePlateValidator
 import com.example.vehiclerecognition.domain.validation.LicensePlateValidator
+import com.example.vehiclerecognition.domain.validation.PlateTextCandidateGenerator
+import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
 import com.example.vehiclerecognition.data.models.DetectionMode
 import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.model.VehicleColor
@@ -43,30 +45,69 @@ class VehicleMatcher(
      * @param country The country to filter watchlist entries by.
      * @return True if a match is found, false otherwise.
      */
-    suspend fun findMatch(detectedVehicle: DetectedVehicle, detectionMode: DetectionMode, country: Country): Boolean {
+    suspend fun findMatch(
+        detectedVehicle: DetectedVehicle,
+        detectionMode: DetectionMode,
+        country: Country,
+        enablePlateCandidateGeneration: Boolean = true
+    ): Boolean {
         val watchlist = watchlistRepository.getEntriesByCountry(country).first()
         if (watchlist.isEmpty()) return false
 
-        // FR 1.11: For modes that include 'LP', the detected License Plate MUST first be checked
-        // to ensure it conforms to one of the required formats for the specified country.
-        if (detectionModeRequiresLP(detectionMode)) {
-            if (detectedVehicle.licensePlate == null) {
-                return false // Missing LP for LP-dependent mode
-            }
-            
-            // Validate with country-specific validation
-            val countryAwareValidator = CountryAwareLicensePlateValidator(country)
-            val isValidPlate = countryAwareValidator.isValid(detectedVehicle.licensePlate)
-            Log.d("VehicleMatcher", "Validating plate '${detectedVehicle.licensePlate}' for ${country.displayName}: $isValidPlate")
-            if (!isValidPlate) {
-                Log.d("VehicleMatcher", "License plate validation failed for ${country.displayName}: ${detectedVehicle.licensePlate}")
-                return false // Invalid format for the current country
+        // If mode does not require LP, fall back to original behavior
+        if (!detectionModeRequiresLP(detectionMode)) {
+            return watchlist.any { entry ->
+                isMatch(detectedVehicle, entry, detectionMode)
             }
         }
 
-        return watchlist.any { entry ->
-            isMatch(detectedVehicle, entry, detectionMode)
+        // LP-based modes: optionally generate candidate LPs from OCR and try matching any candidate
+        val rawOcrText = detectedVehicle.licensePlate ?: return false
+
+        // Extract relevant characters per-country for baseline formatting
+        val extracted = CountryAwarePlateValidator.extractRelevantCharacters(rawOcrText, country)
+
+        val candidateSet = LinkedHashSet<String>()
+        if (enablePlateCandidateGeneration) {
+            // Derive patterns and generate ambiguity-resolved candidates
+            val patterns = PlateTextCandidateGenerator.getPatternsForCountry(country)
+            val formatted = CountryAwarePlateValidator.validateAndFormatPlate(extracted, country)
+            val generatedCandidates = PlateTextCandidateGenerator.generateCandidates(extracted, patterns)
+            candidateSet.add(rawOcrText)
+            candidateSet.add(extracted)
+            formatted?.let { candidateSet.add(it) }
+            candidateSet.addAll(generatedCandidates)
+        } else {
+            // Only use straightforward extracted and formatted values (no candidate expansion)
+            candidateSet.add(rawOcrText)
+            candidateSet.add(extracted)
+            CountryAwarePlateValidator.validateAndFormatPlate(extracted, country)?.let { candidateSet.add(it) }
         }
+
+        // Filter candidates by country-specific validity to reduce false positives (FR 1.11)
+        val validCandidates = candidateSet.filter { cand ->
+            CountryAwarePlateValidator.isValidFormat(cand, country)
+        }
+
+        if (validCandidates.isEmpty()) {
+            Log.d("VehicleMatcher", "No valid LP candidates after correction for ${country.displayName} from '$rawOcrText'")
+            return false
+        }
+
+        // Try each candidate against the watchlist using existing attribute matching logic
+        for (candidate in validCandidates) {
+            val candidateVehicle = DetectedVehicle(
+                licensePlate = candidate,
+                color = detectedVehicle.color,
+                type = detectedVehicle.type
+            )
+            val matchFound = watchlist.any { entry ->
+                isMatch(candidateVehicle, entry, detectionMode)
+            }
+            if (matchFound) return true
+        }
+
+        return false
     }
 
     /**

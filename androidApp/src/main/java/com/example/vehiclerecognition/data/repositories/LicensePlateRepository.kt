@@ -48,6 +48,7 @@ class LicensePlateRepository @Inject constructor(
         private val ENABLE_DEBUG_VIDEO_KEY = booleanPreferencesKey("enable_debug_video")
         private val CAMERA_ZOOM_RATIO_KEY = floatPreferencesKey("camera_zoom_ratio")
         private val SELECTED_COUNTRY_KEY = stringPreferencesKey("selected_country")
+        private val ENABLE_PLATE_CANDIDATES_KEY = booleanPreferencesKey("enable_plate_candidates")
         
         // Vehicle Color Detection Settings
         private val ENABLE_GRAY_FILTERING_KEY = booleanPreferencesKey("enable_gray_filtering")
@@ -81,6 +82,7 @@ class LicensePlateRepository @Inject constructor(
             } catch (e: IllegalArgumentException) {
                 Country.ISRAEL
             },
+            enablePlateCandidateGeneration = preferences[ENABLE_PLATE_CANDIDATES_KEY] ?: true,
             
             // Vehicle Color Detection Settings
             enableGrayFiltering = preferences[ENABLE_GRAY_FILTERING_KEY] ?: true,
@@ -104,6 +106,7 @@ class LicensePlateRepository @Inject constructor(
             preferences[ENABLE_DEBUG_VIDEO_KEY] = settings.enableDebugVideo
             preferences[CAMERA_ZOOM_RATIO_KEY] = settings.cameraZoomRatio
             preferences[SELECTED_COUNTRY_KEY] = settings.selectedCountry.name
+            preferences[ENABLE_PLATE_CANDIDATES_KEY] = settings.enablePlateCandidateGeneration
             
             // Vehicle Color Detection Settings
             preferences[ENABLE_GRAY_FILTERING_KEY] = settings.enableGrayFiltering

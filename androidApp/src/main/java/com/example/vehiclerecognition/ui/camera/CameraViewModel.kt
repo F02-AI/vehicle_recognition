@@ -855,7 +855,12 @@ class CameraViewModel @Inject constructor(
         for (plate in plates) {
             plate.recognizedText?.let { plateText ->
                 val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
-                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_ONLY, currentCountry)) {
+                if (vehicleMatcher.findMatch(
+                        detectedVehicle,
+                        DetectionMode.LP_ONLY,
+                        currentCountry,
+                        _currentSettings.value.enablePlateCandidateGeneration
+                    )) {
                     Log.d("CameraViewModel", "LP-only match found: $plateText")
                     matchedPlates.add(plateText)
                     hasAnyMatch = true
@@ -997,7 +1002,12 @@ class CameraViewModel @Inject constructor(
                                 licensePlate = plateText,
                                 color = color
                             )
-                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR, currentCountry)) {
+                            if (vehicleMatcher.findMatch(
+                                    detectedVehicle,
+                                    DetectionMode.LP_COLOR,
+                                    currentCountry,
+                                    _currentSettings.value.enablePlateCandidateGeneration
+                                )) {
                                 Log.d("CameraViewModel", "LP+Color match found (primary): $plateText + $color (Vehicle: $vehicleId)")
                                 matchedPlates.add(plateText)
                                 matchedVehicles.add(vehicle.id)
@@ -1012,7 +1022,12 @@ class CameraViewModel @Inject constructor(
                                     licensePlate = plateText,
                                     color = color
                                 )
-                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR, currentCountry)) {
+                                if (vehicleMatcher.findMatch(
+                                        detectedVehicle,
+                                        DetectionMode.LP_COLOR,
+                                        currentCountry,
+                                        _currentSettings.value.enablePlateCandidateGeneration
+                                    )) {
                                     Log.d("CameraViewModel", "LP+Color match found (secondary): $plateText + $color (Vehicle: $vehicleId)")
                                     matchedPlates.add(plateText)
                                     matchedVehicles.add(vehicle.id)
@@ -1050,7 +1065,12 @@ class CameraViewModel @Inject constructor(
                             licensePlate = plateText,
                             type = type
                         )
-                        if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_TYPE, currentCountry)) {
+                        if (vehicleMatcher.findMatch(
+                                detectedVehicle,
+                                DetectionMode.LP_TYPE,
+                                currentCountry,
+                                _currentSettings.value.enablePlateCandidateGeneration
+                            )) {
                             Log.d("CameraViewModel", "LP+Type match found: $plateText + $type (Vehicle: $vehicleId)")
                             matchedPlates.add(plateText)
                             matchedVehicles.add(vehicle.id)
@@ -1090,7 +1110,12 @@ class CameraViewModel @Inject constructor(
                                 color = color,
                                 type = type
                             )
-                            if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE, currentCountry)) {
+                            if (vehicleMatcher.findMatch(
+                                    detectedVehicle,
+                                    DetectionMode.LP_COLOR_TYPE,
+                                    currentCountry,
+                                    _currentSettings.value.enablePlateCandidateGeneration
+                                )) {
                                 Log.d("CameraViewModel", "LP+Color+Type match found (primary): $plateText + $color + $type (Vehicle: $vehicleId)")
                                 matchedPlates.add(plateText)
                                 matchedVehicles.add(vehicle.id)
@@ -1106,7 +1131,12 @@ class CameraViewModel @Inject constructor(
                                     color = color,
                                     type = type
                                 )
-                                if (vehicleMatcher.findMatch(detectedVehicle, DetectionMode.LP_COLOR_TYPE, currentCountry)) {
+                                if (vehicleMatcher.findMatch(
+                                        detectedVehicle,
+                                        DetectionMode.LP_COLOR_TYPE,
+                                        currentCountry,
+                                        _currentSettings.value.enablePlateCandidateGeneration
+                                    )) {
                                     Log.d("CameraViewModel", "LP+Color+Type match found (secondary): $plateText + $color + $type (Vehicle: $vehicleId)")
                                     matchedPlates.add(plateText)
                                     matchedVehicles.add(vehicle.id)
@@ -1200,7 +1230,12 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             val currentDetectionMode = settingsRepository.detectionMode.value
             val currentCountry = _currentSettings.value.selectedCountry
-            val isMatch = vehicleMatcher.findMatch(detectedVehicle, currentDetectionMode, currentCountry)
+                val isMatch = vehicleMatcher.findMatch(
+                    detectedVehicle,
+                    currentDetectionMode,
+                    currentCountry,
+                    _currentSettings.value.enablePlateCandidateGeneration
+                )
             
             if (isMatch) {
                 Log.d("CameraViewModel", "MATCH FOUND based on mode $currentDetectionMode!")
