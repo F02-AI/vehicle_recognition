@@ -18,6 +18,7 @@ import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.VehicleDetection
 import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.ml.processors.VehicleSegmentationProcessor
+import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,7 +49,8 @@ class CameraViewModel @Inject constructor(
     private val soundAlertPlayer: SoundAlertPlayer,
     private val licensePlateRepository: LicensePlateRepository,
     private val vehicleSegmentationProcessor: VehicleSegmentationProcessor,
-    private val watchlistRepository: WatchlistRepository
+    private val watchlistRepository: WatchlistRepository,
+    private val templateService: LicensePlateTemplateService
 ) : ViewModel() {
 
     // Stores the desired user-facing zoom RATIO (e.g., 1.0f for 1x, 2.0f for 2x)
@@ -161,6 +163,10 @@ class CameraViewModel @Inject constructor(
     
     private val _modelsReady = MutableStateFlow(false)
     val modelsReady: StateFlow<Boolean> = _modelsReady.asStateFlow()
+    
+    // Template configuration warning
+    private val _templateConfigurationWarning = MutableStateFlow<String?>(null)
+    val templateConfigurationWarning: StateFlow<String?> = _templateConfigurationWarning.asStateFlow()
 
     init {
         Log.d("CameraViewModel","CameraViewModel initialized.")
@@ -176,6 +182,23 @@ class CameraViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("CameraViewModel", "Error loading initial settings, using default zoom", e)
                 _desiredZoomRatio.value = 1.0f
+            }
+        }
+        
+        // Check template configuration status for warning banner
+        viewModelScope.launch {
+            try {
+                templateService.initializeSystem()
+                val configStatus = templateService.getConfigurationStatus()
+                if (!configStatus.isFullyConfigured) {
+                    val unconfiguredCountries = configStatus.needsConfiguration.joinToString(", ") { it.displayName }
+                    _templateConfigurationWarning.value = "License plate templates need configuration for: $unconfiguredCountries"
+                } else {
+                    _templateConfigurationWarning.value = null
+                }
+            } catch (e: Exception) {
+                Log.e("CameraViewModel", "Error checking template configuration status", e)
+                _templateConfigurationWarning.value = "Unable to verify license plate template configuration"
             }
         }
         

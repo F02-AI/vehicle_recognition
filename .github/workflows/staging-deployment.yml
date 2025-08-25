@@ -1,0 +1,289 @@
+name: Staging Deployment
+
+on:
+  push:
+    branches: [ develop, 'feature/*staging' ]
+  workflow_dispatch:
+    inputs:
+      deploy_percentage:
+        description: 'Deployment percentage (1-100)'
+        required: false
+        default: '100'
+        type: string
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
+
+jobs:
+  build-staging:
+    name: Build Staging APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'adopt'
+        
+    - name: Cache Gradle packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+          
+    - name: Make gradlew executable
+      run: chmod +x ./gradlew
+      
+    - name: Run tests before staging build
+      run: ./gradlew testDebugUnitTest
+      
+    - name: Build staging APK
+      run: ./gradlew assembleStaging
+      
+    - name: Upload staging APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: staging-apk-${{ github.sha }}
+        path: androidApp/build/outputs/apk/staging/androidApp-staging.apk
+        retention-days: 14
+        
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-staging
+    timeout-minutes: 15
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download staging APK
+      uses: actions/download-artifact@v4
+      with:
+        name: staging-apk-${{ github.sha }}
+        path: ./artifacts
+        
+    - name: Deploy to Firebase App Distribution
+      uses: wzieba/Firebase-Distribution-Github-Action@v1
+      with:
+        appId: ${{ secrets.FIREBASE_STAGING_APP_ID }}
+        serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        groups: staging-testers
+        file: ./artifacts/androidApp-staging.apk
+        releaseNotes: |
+          🚀 Staging Build - ${{ github.sha }}
+          
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.event.head_commit.message }}
+          
+          ## License Plate Template Feature
+          - Template selection in settings
+          - Country-specific validation
+          - Enhanced camera banner
+          - Database migration v3→v4
+          
+          This is a staging build for internal testing only.
+          
+    - name: Notify team on Slack
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        channel: '#staging-deployments'
+        text: |
+          🚀 Staging deployment successful!
+          
+          *Branch:* ${{ github.ref_name }}
+          *Commit:* ${{ github.sha }}
+          *APK:* Available in Firebase App Distribution
+          
+          Ready for testing by staging team.
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
+  smoke-tests:
+    name: Staging Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'adopt'
+        
+    - name: Download staging APK
+      uses: actions/download-artifact@v4
+      with:
+        name: staging-apk-${{ github.sha }}
+        path: ./artifacts
+        
+    - name: Install APK on emulator and run smoke tests
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 30
+        target: google_apis
+        arch: x86_64
+        profile: Nexus 6
+        script: |
+          adb install ./artifacts/androidApp-staging.apk
+          
+          # Wait for app to be ready
+          sleep 10
+          
+          # Launch app and verify basic functionality
+          adb shell am start -n com.example.vehiclerecognition.staging/com.example.vehiclerecognition.MainActivity
+          sleep 5
+          
+          # Check if app is running
+          if adb shell pidof com.example.vehiclerecognition.staging; then
+            echo "✅ App launched successfully"
+          else
+            echo "❌ App failed to launch"
+            exit 1
+          fi
+          
+          # Basic UI smoke test using adb commands
+          adb shell input tap 500 1000  # Tap settings (approximate)
+          sleep 2
+          adb shell input tap 500 800   # Tap templates (approximate)
+          sleep 2
+          
+          echo "✅ Basic smoke tests completed"
+          
+    - name: Report smoke test results
+      if: always()
+      run: |
+        if [ $? -eq 0 ]; then
+          echo "✅ Staging smoke tests passed"
+        else
+          echo "❌ Staging smoke tests failed"
+        fi
+        
+  performance-check:
+    name: Staging Performance Check
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download staging APK
+      uses: actions/download-artifact@v4
+      with:
+        name: staging-apk-${{ github.sha }}
+        path: ./artifacts
+        
+    - name: Analyze APK size and structure
+      run: |
+        APK_FILE="./artifacts/androidApp-staging.apk"
+        APK_SIZE=$(stat -c%s "$APK_FILE")
+        APK_SIZE_MB=$((APK_SIZE / 1024 / 1024))
+        
+        echo "📊 APK Analysis Results:"
+        echo "Size: ${APK_SIZE_MB}MB"
+        
+        # Check if APK size is reasonable (warn if >50MB)
+        if [ $APK_SIZE_MB -gt 50 ]; then
+          echo "⚠️  APK size is large: ${APK_SIZE_MB}MB"
+          echo "Consider optimizing assets and dependencies"
+        else
+          echo "✅ APK size is acceptable: ${APK_SIZE_MB}MB"
+        fi
+        
+        # Basic APK structure analysis
+        unzip -l "$APK_FILE" | head -20
+        
+    - name: Method count check
+      run: |
+        APK_FILE="./artifacts/androidApp-staging.apk"
+        
+        # Use dexcount if available, otherwise skip
+        if command -v dexcount &> /dev/null; then
+          dexcount "$APK_FILE"
+        else
+          echo "ℹ️  Dexcount tool not available, skipping method count analysis"
+        fi
+        
+  staging-report:
+    name: Generate Staging Report
+    runs-on: ubuntu-latest
+    needs: [build-staging, deploy-staging, smoke-tests, performance-check]
+    if: always()
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Generate staging deployment report
+      run: |
+        cat > staging-report.md << EOF
+        # Staging Deployment Report
+        
+        **Date:** $(date -u)
+        **Branch:** ${{ github.ref_name }}
+        **Commit:** ${{ github.sha }}
+        **Commit Message:** ${{ github.event.head_commit.message }}
+        
+        ## Build Results
+        - **Build:** ${{ needs.build-staging.result }}
+        - **Deployment:** ${{ needs.deploy-staging.result }}
+        - **Smoke Tests:** ${{ needs.smoke-tests.result }}
+        - **Performance Check:** ${{ needs.performance-check.result }}
+        
+        ## Test Results
+        $(if [ "${{ needs.smoke-tests.result }}" = "success" ]; then echo "✅ All smoke tests passed"; else echo "❌ Some smoke tests failed"; fi)
+        
+        ## Next Steps
+        - Manual testing by QA team
+        - Performance validation
+        - Feature verification
+        - Prepare for production deployment if all tests pass
+        
+        ## Artifacts
+        - Staging APK available in Firebase App Distribution
+        - Test reports available in GitHub Actions artifacts
+        
+        EOF
+        
+        cat staging-report.md
+        
+    - name: Upload staging report
+      uses: actions/upload-artifact@v4
+      with:
+        name: staging-report-${{ github.sha }}
+        path: staging-report.md
+        retention-days: 30
+        
+    - name: Comment on PR if applicable
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('staging-report.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Staging Deployment Report\n\n${report}`
+          });

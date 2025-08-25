@@ -1,6 +1,7 @@
 package com.example.vehiclerecognition.ui.settings
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -19,6 +20,11 @@ import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
 import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.data.models.DetectionMode
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.vehiclerecognition.domain.service.ConfigurationStatus
 
 // Extension function to get the display string for DetectionMode with proper separators
 fun DetectionMode.toDisplayString(): String {
@@ -163,6 +169,9 @@ fun SettingsContent(
                     )
                 }
             }
+            
+            // License Plate Template Configuration
+            LicensePlateTemplateConfigurationCard()
             
             // Vehicle Color Detection Advanced Settings (only show when color-based mode is selected)
             if (selectedMode.involvesColor()) {
@@ -427,5 +436,151 @@ fun SettingsContentPreview() {
             onModeSelected = {},
             onLicensePlateSettingsChanged = {}
         )
+    }
+}
+
+@Composable
+fun LicensePlateTemplateConfigurationCard(
+    templateViewModel: LicensePlateTemplateViewModel = hiltViewModel()
+) {
+    val configurationStatus by templateViewModel.configurationStatus.collectAsState()
+    var showFullConfiguration by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "License Plate Templates:",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    
+                    configurationStatus?.let { status ->
+                        Text(
+                            text = if (status.isFullyConfigured) {
+                                "All countries configured (${status.configuredCountries}/${status.totalCountries})"
+                            } else {
+                                "Configuration incomplete (${status.configuredCountries}/${status.totalCountries})"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (status.isFullyConfigured) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            }
+                        )
+                    }
+                }
+                
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Configure Templates",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            
+            Text(
+                text = "Configure license plate validation patterns for each country",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            // Show warning if not fully configured
+            configurationStatus?.let { status ->
+                if (!status.isFullyConfigured) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .padding(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Warning",
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Needs configuration: ${status.needsConfiguration.joinToString(", ") { it.displayName }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+            
+            // Toggle to show/hide full configuration
+            Button(
+                onClick = { showFullConfiguration = !showFullConfiguration },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (showFullConfiguration) "Hide Configuration" else "Configure Templates")
+            }
+        }
+    }
+    
+    // Show full template configuration when expanded
+    if (showFullConfiguration) {
+        Spacer(modifier = Modifier.height(16.dp))
+        val uiState by templateViewModel.uiState.collectAsState()
+        val selectedCountry by templateViewModel.selectedCountry.collectAsState()
+        val templates by templateViewModel.templates.collectAsState()
+        val validationErrors by templateViewModel.validationErrors.collectAsState()
+        val isSaving by templateViewModel.isSaving.collectAsState()
+        val canSave by templateViewModel.canSave.collectAsState()
+        
+        when (val state = uiState) {
+            is TemplateUiState.Loading -> {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+            is TemplateUiState.Success -> {
+                LicensePlateTemplateContent(
+                    availableCountries = state.availableCountries,
+                    configurationStatus = state.configurationStatus,
+                    selectedCountry = selectedCountry,
+                    templates = templates,
+                    validationErrors = validationErrors,
+                    isSaving = isSaving,
+                    canSave = canSave,
+                    onCountrySelected = templateViewModel::selectCountry,
+                    onTemplatePatternChanged = templateViewModel::updateTemplatePattern,
+                    onAddTemplate = templateViewModel::addTemplate,
+                    onDeleteTemplate = templateViewModel::deleteTemplate,
+                    onSaveTemplates = templateViewModel::saveTemplates
+                )
+            }
+            is TemplateUiState.Error -> {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Text(
+                        text = "Error: ${state.message}",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
     }
 } 

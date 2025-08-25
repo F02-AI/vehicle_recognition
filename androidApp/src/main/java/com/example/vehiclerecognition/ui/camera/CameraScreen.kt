@@ -1309,6 +1309,37 @@ fun CameraScreen(
                     
 
 
+                    // Template configuration warning banner
+                    val templateWarning by viewModel.templateConfigurationWarning.collectAsState()
+                    templateWarning?.let { warningMessage ->
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(16.dp)
+                                .fillMaxWidth(0.9f),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFA500).copy(alpha = 0.9f)), // Orange/Yellow warning color
+                            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "⚠️",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                                Text(
+                                    text = warningMessage,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                    }
+
                     // Subtle alert notification for watchlist matches
                     if (matchFound) {
                         Card(

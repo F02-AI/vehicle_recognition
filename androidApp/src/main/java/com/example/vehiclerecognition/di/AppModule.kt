@@ -4,9 +4,14 @@ import android.content.Context
 import androidx.room.Room
 import com.example.vehiclerecognition.R // Assuming R class is available for sound resource
 import com.example.vehiclerecognition.data.db.AppDatabase
+import com.example.vehiclerecognition.data.db.CountryDao
+import com.example.vehiclerecognition.data.db.LicensePlateTemplateDao
 import com.example.vehiclerecognition.data.db.WatchlistDao
+import com.example.vehiclerecognition.data.repositories.AndroidLicensePlateTemplateRepository
 import com.example.vehiclerecognition.data.repository.AndroidSettingsRepository
 import com.example.vehiclerecognition.data.repository.AndroidWatchlistRepository
+import com.example.vehiclerecognition.domain.repository.LicensePlateTemplateRepository
+import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
 import com.example.vehiclerecognition.domain.logic.VehicleMatcher
 import com.example.vehiclerecognition.domain.platform.SoundAlertPlayer
 import com.example.vehiclerecognition.domain.repository.SettingsRepository
@@ -32,7 +37,7 @@ object AppModule {
             appContext,
             AppDatabase::class.java,
             "vehicle_recognition_database"
-        ).addMigrations(AppDatabase.MIGRATION_2_3)
+        ).addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
          .fallbackToDestructiveMigrationOnDowngrade()
          .build()
     }
@@ -41,6 +46,18 @@ object AppModule {
     @Singleton
     fun provideWatchlistDao(appDatabase: AppDatabase): WatchlistDao {
         return appDatabase.watchlistDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideCountryDao(appDatabase: AppDatabase): CountryDao {
+        return appDatabase.countryDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideLicensePlateTemplateDao(appDatabase: AppDatabase): LicensePlateTemplateDao {
+        return appDatabase.licensePlateTemplateDao()
     }
 
     @Provides
@@ -98,5 +115,22 @@ object AppModule {
         licensePlateValidator: LicensePlateValidator
     ): VehicleMatcher {
         return VehicleMatcher(watchlistRepository, licensePlateValidator)
+    }
+
+    @Provides
+    @Singleton
+    fun provideLicensePlateTemplateRepository(
+        countryDao: CountryDao,
+        templateDao: LicensePlateTemplateDao
+    ): LicensePlateTemplateRepository {
+        return AndroidLicensePlateTemplateRepository(countryDao, templateDao)
+    }
+
+    @Provides
+    @Singleton
+    fun provideLicensePlateTemplateService(
+        templateRepository: LicensePlateTemplateRepository
+    ): LicensePlateTemplateService {
+        return LicensePlateTemplateService(templateRepository)
     }
 } 
