@@ -20,15 +20,7 @@ class AndroidWatchlistRepository(
 ) : WatchlistRepository {
 
     override suspend fun addEntry(entry: WatchlistEntry): Boolean {
-        // Validate license plate format based on the entry's country
-        val licensePlate = entry.licensePlate
-        if (licensePlate != null) {
-            val countryAwareValidator = CountryAwareLicensePlateValidator(entry.country)
-            if (!countryAwareValidator.isValid(licensePlate)) {
-                println("AndroidWatchlistRepository: Invalid license plate format for $licensePlate in ${entry.country.displayName}. Entry not added.")
-                return false
-            }
-        }
+        // Note: License plate validation is now handled in the ViewModel using template-based validation
         try {
             val entityToInsert = entry.toEntity()
             watchlistDao.insertEntry(entityToInsert)
@@ -61,7 +53,7 @@ class AndroidWatchlistRepository(
     }
     
     override fun getEntriesByCountry(country: Country): Flow<List<WatchlistEntry>> = flow {
-        val entries = watchlistDao.getEntriesByCountry(country.name).map { it.toDomainModel() }
+        val entries = watchlistDao.getEntriesByCountry(country.isoCode).map { it.toDomainModel() }
         println("AndroidWatchlistRepository: Retrieved ${entries.size} entries for country ${country.displayName}")
         emit(entries)
     }.catch { e ->
@@ -82,7 +74,7 @@ class AndroidWatchlistRepository(
     
     override suspend fun clearByCountry(country: Country): Boolean {
         return try {
-            val rowsAffected = watchlistDao.clearByCountry(country.name)
+            val rowsAffected = watchlistDao.clearByCountry(country.isoCode)
             println("AndroidWatchlistRepository: Cleared ${rowsAffected} entries for country ${country.displayName}")
             rowsAffected > 0
         } catch (e: Exception) {

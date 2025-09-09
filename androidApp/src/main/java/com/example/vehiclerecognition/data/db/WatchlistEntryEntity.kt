@@ -15,14 +15,14 @@ data class WatchlistEntryEntity(
     val licensePlate: String?,
     val vehicleType: String, // Stored as String, converted from/to Enum
     val vehicleColor: String, // Stored as String, converted from/to Enum
-    val country: String = Country.ISRAEL.name // Default to Israel for backward compatibility
+    val country: String = Country.ISRAEL.isoCode // Default to Israel for backward compatibility
 ) {
     fun toDomainModel(): WatchlistEntry {
         return WatchlistEntry(
             licensePlate = licensePlate,
             vehicleType = VehicleType.valueOf(vehicleType),
             vehicleColor = VehicleColor.valueOf(vehicleColor),
-            country = try { Country.valueOf(country) } catch (e: IllegalArgumentException) { Country.ISRAEL }
+            country = Country.fromIsoCode(country) ?: Country.ISRAEL
         )
     }
 }
@@ -32,6 +32,6 @@ fun WatchlistEntry.toEntity(): WatchlistEntryEntity {
         licensePlate = licensePlate,
         vehicleType = vehicleType.name,
         vehicleColor = vehicleColor.name,
-        country = country.name
+        country = country.isoCode
     )
 } 

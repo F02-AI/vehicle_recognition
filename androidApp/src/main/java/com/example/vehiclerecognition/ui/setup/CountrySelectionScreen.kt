@@ -99,7 +99,7 @@ fun CountrySelectionScreen(
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {
-                Country.values().forEach { country ->
+                Country.values().sortedBy { it.displayName }.forEach { country ->
                     DropdownMenuItem(
                         text = {
                             Row(

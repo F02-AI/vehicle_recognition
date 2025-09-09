@@ -6,6 +6,8 @@ import com.example.vehiclerecognition.domain.validation.CountryAwareLicensePlate
 import com.example.vehiclerecognition.domain.validation.LicensePlateValidator
 import com.example.vehiclerecognition.domain.validation.PlateTextCandidateGenerator
 import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
+import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
+import com.example.vehiclerecognition.ml.processors.TemplateAwareOcrEnhancer
 import com.example.vehiclerecognition.data.models.DetectionMode
 import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.model.VehicleColor
@@ -24,7 +26,9 @@ import kotlinx.coroutines.flow.first
  */
 class VehicleMatcher(
     private val watchlistRepository: WatchlistRepository,
-    private val licensePlateValidator: LicensePlateValidator
+    private val licensePlateValidator: LicensePlateValidator,
+    private val templateService: LicensePlateTemplateService,
+    private val templateAwareEnhancer: TemplateAwareOcrEnhancer
 ) {
 
     /**
@@ -56,9 +60,12 @@ class VehicleMatcher(
 
         // If mode does not require LP, fall back to original behavior
         if (!detectionModeRequiresLP(detectionMode)) {
-            return watchlist.any { entry ->
-                isMatch(detectedVehicle, entry, detectionMode)
+            for (entry in watchlist) {
+                if (isMatch(detectedVehicle, entry, detectionMode)) {
+                    return true
+                }
             }
+            return false
         }
 
         // LP-based modes: optionally generate candidate LPs from OCR and try matching any candidate
@@ -101,10 +108,12 @@ class VehicleMatcher(
                 color = detectedVehicle.color,
                 type = detectedVehicle.type
             )
-            val matchFound = watchlist.any { entry ->
-                isMatch(candidateVehicle, entry, detectionMode)
+            for (entry in watchlist) {
+                if (isMatch(candidateVehicle, entry, detectionMode)) {
+                    Log.d("VehicleMatcher", "Match found with LP candidate: $candidate")
+                    return true
+                }
             }
-            if (matchFound) return true
         }
 
         return false
@@ -143,32 +152,109 @@ class VehicleMatcher(
     /**
      * Compares license plates based on their country-specific format
      */
-    private fun licensePlatesMatch(detected: String?, entry: String?, country: Country): Boolean {
+    private suspend fun licensePlatesMatch(detected: String?, entry: String?, country: Country): Boolean {
         if (detected.isNullOrEmpty() || entry.isNullOrEmpty()) return false
         
-        return when (country) {
-            Country.ISRAEL -> {
-                // Compare numeric digits only for Israeli plates
-                val detectedDigits = extractNumericDigits(detected)
-                val entryDigits = extractNumericDigits(entry)
-                detectedDigits.isNotEmpty() && detectedDigits == entryDigits
-            }
-            Country.UK -> {
-                // Compare alphanumeric characters for UK plates
-                val detectedChars = extractAlphanumericCharacters(detected)
-                val entryChars = extractAlphanumericCharacters(entry)
-                detectedChars.isNotEmpty() && detectedChars == entryChars
-            }
-            else -> {
-                // Default to Israeli format for all other countries
-                val detectedDigits = extractNumericDigits(detected)
-                val entryDigits = extractNumericDigits(entry)
-                detectedDigits.isNotEmpty() && detectedDigits == entryDigits
+        // First try template-aware matching if templates are configured
+        val hasTemplates = templateAwareEnhancer.hasConfiguredTemplates(country)
+        
+        if (hasTemplates) {
+            // Use template-based matching with character confusion handling
+            return templateBasedLicensePlateMatch(detected, entry, country)
+        } else {
+            // Fall back to legacy matching logic
+            return when (country) {
+                Country.ISRAEL -> {
+                    // Compare numeric digits only for Israeli plates
+                    val detectedDigits = extractNumericDigits(detected)
+                    val entryDigits = extractNumericDigits(entry)
+                    detectedDigits.isNotEmpty() && detectedDigits == entryDigits
+                }
+                Country.UK -> {
+                    // Compare alphanumeric characters for UK plates
+                    val detectedChars = extractAlphanumericCharacters(detected)
+                    val entryChars = extractAlphanumericCharacters(entry)
+                    detectedChars.isNotEmpty() && detectedChars == entryChars
+                }
+                else -> {
+                    // Default to Israeli format for all other countries
+                    val detectedDigits = extractNumericDigits(detected)
+                    val entryDigits = extractNumericDigits(entry)
+                    detectedDigits.isNotEmpty() && detectedDigits == entryDigits
+                }
             }
         }
     }
+    
+    /**
+     * Template-based license plate matching with substring support
+     */
+    private suspend fun templateBasedLicensePlateMatch(detected: String, entry: String, country: Country): Boolean {
+        // Clean both strings for comparison
+        val cleanedDetected = cleanLicensePlateForMatching(detected)
+        val cleanedEntry = cleanLicensePlateForMatching(entry)
+        
+        // Try exact match first
+        if (cleanedDetected == cleanedEntry) {
+            Log.d("VehicleMatcher", "Exact template match: $detected == $entry")
+            return true
+        }
+        
+        // Try enhanced OCR matching with character confusion handling
+        val enhancementResult = templateAwareEnhancer.enhanceOcrResult(detected, country)
+        if (enhancementResult.isValidFormat && enhancementResult.formattedPlate != null) {
+            val enhancedCleaned = cleanLicensePlateForMatching(enhancementResult.formattedPlate)
+            if (enhancedCleaned == cleanedEntry) {
+                Log.d("VehicleMatcher", "Enhanced OCR match: $detected -> ${enhancementResult.formattedPlate} == $entry")
+                return true
+            }
+        }
+        
+        // Try substring matching if the detected text is longer than the entry
+        if (cleanedDetected.length > cleanedEntry.length) {
+            val isSubstringMatch = cleanedDetected.contains(cleanedEntry)
+            if (isSubstringMatch) {
+                Log.d("VehicleMatcher", "Substring match: $cleanedEntry found in $cleanedDetected")
+                return true
+            }
+        }
+        
+        // Try reverse substring matching if the entry is longer than detected
+        if (cleanedEntry.length > cleanedDetected.length) {
+            val isReverseSubstringMatch = cleanedEntry.contains(cleanedDetected)
+            if (isReverseSubstringMatch) {
+                Log.d("VehicleMatcher", "Reverse substring match: $cleanedDetected found in $cleanedEntry")
+                return true
+            }
+        }
+        
+        // Try enhanced substring matching - check if the enhanced result is a substring
+        if (enhancementResult.formattedPlate != null) {
+            val enhancedCleaned = cleanLicensePlateForMatching(enhancementResult.formattedPlate)
+            
+            if (enhancedCleaned.length != cleanedEntry.length) {
+                val longerText = if (enhancedCleaned.length > cleanedEntry.length) enhancedCleaned else cleanedEntry
+                val shorterText = if (enhancedCleaned.length > cleanedEntry.length) cleanedEntry else enhancedCleaned
+                
+                if (longerText.contains(shorterText)) {
+                    Log.d("VehicleMatcher", "Enhanced substring match: $shorterText found in $longerText")
+                    return true
+                }
+            }
+        }
+        
+        Log.d("VehicleMatcher", "No template match found: $detected vs $entry")
+        return false
+    }
+    
+    /**
+     * Cleans license plate text for matching by removing spaces, dashes, and normalizing case
+     */
+    private fun cleanLicensePlateForMatching(plateText: String): String {
+        return plateText.replace(Regex("[^A-Z0-9]"), "").uppercase()
+    }
 
-    private fun isMatch(detected: DetectedVehicle, entry: WatchlistEntry, mode: DetectionMode): Boolean {
+    private suspend fun isMatch(detected: DetectedVehicle, entry: WatchlistEntry, mode: DetectionMode): Boolean {
         return when (mode) {
             DetectionMode.LP_ONLY -> licensePlatesMatch(detected.licensePlate, entry.licensePlate, entry.country)
             DetectionMode.LP_COLOR -> licensePlatesMatch(detected.licensePlate, entry.licensePlate, entry.country) && detected.color == entry.vehicleColor

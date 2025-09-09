@@ -37,7 +37,7 @@ object AppModule {
             appContext,
             AppDatabase::class.java,
             "vehicle_recognition_database"
-        ).addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+        ).addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
          .fallbackToDestructiveMigrationOnDowngrade()
          .build()
     }
@@ -112,9 +112,11 @@ object AppModule {
     @Singleton
     fun provideVehicleMatcher(
         watchlistRepository: WatchlistRepository,
-        licensePlateValidator: LicensePlateValidator
+        licensePlateValidator: LicensePlateValidator,
+        templateService: LicensePlateTemplateService,
+        templateAwareEnhancer: com.example.vehiclerecognition.ml.processors.TemplateAwareOcrEnhancer
     ): VehicleMatcher {
-        return VehicleMatcher(watchlistRepository, licensePlateValidator)
+        return VehicleMatcher(watchlistRepository, licensePlateValidator, templateService, templateAwareEnhancer)
     }
 
     @Provides

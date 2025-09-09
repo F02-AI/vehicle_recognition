@@ -11,7 +11,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CountryEntity::class, 
         LicensePlateTemplateEntity::class
     ], 
-    version = 4, 
+    version = 5, 
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -73,6 +73,27 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("INSERT OR IGNORE INTO `countries` VALUES ('ISRAEL', 'Israel', 'flag_israel', 1, $currentTime, $currentTime)")
                 database.execSQL("INSERT OR IGNORE INTO `countries` VALUES ('UK', 'United Kingdom', 'flag_uk', 1, $currentTime, $currentTime)")
                 database.execSQL("INSERT OR IGNORE INTO `countries` VALUES ('SINGAPORE', 'Singapore', 'flag_singapore', 1, $currentTime, $currentTime)")
+            }
+        }
+        
+        /**
+         * Migration from version 4 to 5: Convert country field from enum names to ISO codes
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Update watchlist entries to use ISO codes instead of enum names
+                // Only convert the most common ones that users might have
+                database.execSQL("UPDATE watchlist_entries SET country = 'IL' WHERE country = 'ISRAEL'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'GB' WHERE country = 'UK'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'AU' WHERE country = 'AUSTRALIA'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'US' WHERE country = 'UNITED_STATES'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'CA' WHERE country = 'CANADA'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'DE' WHERE country = 'GERMANY'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'FR' WHERE country = 'FRANCE'")
+                database.execSQL("UPDATE watchlist_entries SET country = 'SG' WHERE country = 'SINGAPORE'")
+                
+                // For any remaining enum names that weren't converted, default to IL
+                database.execSQL("UPDATE watchlist_entries SET country = 'IL' WHERE length(country) > 3")
             }
         }
     }

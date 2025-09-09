@@ -12,6 +12,8 @@ import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.repositories.LicensePlateRepository
 import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
+import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
+import com.example.vehiclerecognition.ml.processors.TemplateAwareOcrEnhancer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +36,9 @@ import javax.inject.Inject
 class WatchlistViewModel @Inject constructor(
     private val watchlistRepository: WatchlistRepository,
     private val licensePlateValidator: LicensePlateValidator,
-    private val licensePlateRepository: LicensePlateRepository // Injected
+    private val licensePlateRepository: LicensePlateRepository,
+    private val templateService: LicensePlateTemplateService,
+    private val templateAwareEnhancer: TemplateAwareOcrEnhancer
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<WatchlistUiState>(WatchlistUiState.Loading)
@@ -55,6 +59,12 @@ class WatchlistViewModel @Inject constructor(
 
     private val _lpValidationError = MutableStateFlow<String?>(null)
     val lpValidationError: StateFlow<String?> = _lpValidationError.asStateFlow()
+    
+    private val _templateInfo = MutableStateFlow<List<String>>(emptyList())
+    val templateInfo: StateFlow<List<String>> = _templateInfo.asStateFlow()
+    
+    private val _hasConfiguredTemplates = MutableStateFlow(false)
+    val hasConfiguredTemplates: StateFlow<Boolean> = _hasConfiguredTemplates.asStateFlow()
 
     // For Snackbar messages
     private val _errorEvent = MutableSharedFlow<String>()
@@ -70,6 +80,8 @@ class WatchlistViewModel @Inject constructor(
                 _licensePlateSettings.value = settings
                 // Reload watchlist entries when country changes
                 loadWatchlistEntriesForCountry(settings.selectedCountry)
+                // Load template information for the selected country
+                loadTemplateInformation(settings.selectedCountry)
             }
         }
     }
@@ -97,29 +109,80 @@ class WatchlistViewModel @Inject constructor(
             }
         }
     }
+    
+    private fun loadTemplateInformation(country: Country) {
+        viewModelScope.launch {
+            try {
+                val hasTemplates = templateAwareEnhancer.hasConfiguredTemplates(country)
+                _hasConfiguredTemplates.value = hasTemplates
+                
+                if (hasTemplates) {
+                    val templateInfo = templateAwareEnhancer.getTemplateInfo(country)
+                    _templateInfo.value = templateInfo
+                } else {
+                    _templateInfo.value = listOf("No license plate templates configured for ${country.displayName}")
+                }
+            } catch (e: Exception) {
+                println("WatchlistViewModel: Error loading template info: ${e.message}")
+                _hasConfiguredTemplates.value = false
+                _templateInfo.value = listOf("Error loading template information")
+            }
+        }
+    }
 
     fun addWatchlistEntry() {
         val lp = _newLicensePlate.value.trim()
-        val currentCountry = _licensePlateSettings.value.selectedCountry // Get current country
+        val currentCountry = _licensePlateSettings.value.selectedCountry
         
         // For Color+Type and Color modes, license plate is optional
         val useLicensePlate = lp.isNotEmpty()
         
-        // If license plate is provided, validate it with country-aware validator
-        val countryAwareValidator = CountryAwareLicensePlateValidator(currentCountry)
-        if (useLicensePlate && !countryAwareValidator.isValid(lp)) {
-            _lpValidationError.value = "Invalid LP format for ${currentCountry.displayName}. Expected: ${CountryAwarePlateValidator.getFormatHint(currentCountry)}"
-            println("WatchlistViewModel: Add failed - Invalid LP format: $lp")
+        // If license plate is provided, validate it using template-based validation
+        if (useLicensePlate) {
+            viewModelScope.launch {
+                try {
+                    val hasTemplates = templateAwareEnhancer.hasConfiguredTemplates(currentCountry)
+                    
+                    if (!hasTemplates) {
+                        _lpValidationError.value = "No license plate templates configured for ${currentCountry.displayName}. Please configure templates in Settings."
+                        return@launch
+                    }
+                    
+                    // Convert to uppercase first, THEN remove non-alphanumeric chars
+                    val formattedLP = lp.uppercase().replace(Regex("[^A-Z0-9]"), "")
+                    
+                    val validationResult = templateAwareEnhancer.validateUserInput(formattedLP, currentCountry)
+                    
+                    if (!validationResult.isValid) {
+                        _lpValidationError.value = validationResult.message
+                        return@launch
+                    }
+                    _lpValidationError.value = null
+                    
+                    // Proceed with adding the entry
+                    addValidatedEntry(formattedLP, currentCountry)
+                    
+                } catch (e: Exception) {
+                    _lpValidationError.value = "Error validating license plate: ${e.message}"
+                    println("WatchlistViewModel: Error validating license plate: ${e.message}")
+                }
+            }
             return
         }
+        
         _lpValidationError.value = null
-
+        // Proceed with adding entry without license plate
+        addValidatedEntry(null, currentCountry)
+    }
+    
+    private fun addValidatedEntry(formattedLP: String?, currentCountry: Country) {
         val entry = WatchlistEntry(
-            licensePlate = if (useLicensePlate) lp else null,
+            licensePlate = formattedLP,
             vehicleType = _newVehicleType.value,
             vehicleColor = _newVehicleColor.value,
             country = currentCountry
         )
+        
         viewModelScope.launch {
             val success = watchlistRepository.addEntry(entry)
             if (success) {
@@ -128,7 +191,6 @@ class WatchlistViewModel @Inject constructor(
                 println("WatchlistViewModel: Added entry for ${currentCountry.displayName} - ${entry.licensePlate ?: "no license plate (using color/type)"}")
             } else {
                 val errorMsg = "Failed to add entry. LP might already exist or DB error."
-                // _lpValidationError.value = errorMsg // Keep this for dialog specific error
                 _errorEvent.emit(errorMsg) // Emit for Snackbar
                 println("WatchlistViewModel: $errorMsg")
             }

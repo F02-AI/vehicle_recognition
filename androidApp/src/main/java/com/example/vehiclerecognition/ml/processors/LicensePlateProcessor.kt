@@ -36,7 +36,8 @@ data class ProcessorResult(
 @Singleton
 class LicensePlateProcessor @Inject constructor(
     private val licensePlateDetector: LicensePlateDetector,
-    private val mlKitOcrEngine: MLKitOcrEngine
+    private val mlKitOcrEngine: MLKitOcrEngine,
+    private val templateAwareEnhancer: TemplateAwareOcrEnhancer
 ) {
     
     companion object {
@@ -148,14 +149,26 @@ class LicensePlateProcessor @Inject constructor(
                                 try {
                                     val ocrResult = ocrEngine.processImage(optimizedCroppedBitmap)
                                     
-                                    // Return updated detection with OCR results
+                                    // Apply template-based enhancement if we have raw OCR text
+                                    val rawText = ocrResult.formattedText ?: ocrResult.text
+                                    val enhancementResult = if (rawText?.isNotBlank() == true) {
+                                        templateAwareEnhancer.enhanceOcrResult(rawText, settings.selectedCountry)
+                                    } else {
+                                        null
+                                    }
+                                    
+                                    // Use enhanced result if available and valid
+                                    val finalText = enhancementResult?.formattedPlate ?: rawText
+                                    val finalIsValid = enhancementResult?.isValidFormat ?: ocrResult.isValidFormat
+                                    
+                                    // Return updated detection with enhanced OCR results
                                     detection.copy(
-                                        recognizedText = ocrResult.formattedText ?: ocrResult.text,
-                                        isValidFormat = ocrResult.isValidFormat,
+                                        recognizedText = finalText,
+                                        isValidFormat = finalIsValid,
                                         processingTimeMs = ocrResult.processingTimeMs
                                     )
                                 } catch (e: Exception) {
-                                    // If OCR fails for this plate, return original detection
+                                    // If OCR or enhancement fails for this plate, return original detection
                                     detection
                                 }
                             } else {

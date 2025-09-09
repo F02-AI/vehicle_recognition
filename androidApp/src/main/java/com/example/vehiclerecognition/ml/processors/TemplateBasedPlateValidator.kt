@@ -22,7 +22,7 @@ class TemplateBasedPlateValidator @Inject constructor(
         if (rawText.isEmpty()) return null
         
         return runBlocking {
-            val validationResult = templateService.validateLicensePlate(rawText, country.name)
+            val validationResult = templateService.validateLicensePlate(rawText, country.isoCode)
             validationResult.formattedPlate
         }
     }
@@ -32,7 +32,7 @@ class TemplateBasedPlateValidator @Inject constructor(
      */
     fun isValidFormat(plateText: String, country: Country): Boolean {
         return runBlocking {
-            val validationResult = templateService.validateLicensePlate(plateText, country.name)
+            val validationResult = templateService.validateLicensePlate(plateText, country.isoCode)
             validationResult.isValid
         }
     }
@@ -54,7 +54,7 @@ class TemplateBasedPlateValidator @Inject constructor(
      */
     fun getFormatDescription(country: Country): String {
         return runBlocking {
-            val templates = templateService.getTemplatesForCountry(country.name).first()
+            val templates = templateService.getTemplatesForCountry(country.isoCode).first()
             
             if (templates.isEmpty()) {
                 return@runBlocking "No templates configured for ${country.displayName}"
@@ -73,7 +73,7 @@ class TemplateBasedPlateValidator @Inject constructor(
      */
     fun getFormatHint(country: Country): String {
         return runBlocking {
-            val templates = templateService.getTemplatesForCountry(country.name).first()
+            val templates = templateService.getTemplatesForCountry(country.isoCode).first()
             
             if (templates.isEmpty()) {
                 return@runBlocking "No templates configured"
@@ -88,7 +88,7 @@ class TemplateBasedPlateValidator @Inject constructor(
      * Checks if country has any configured templates
      */
     suspend fun hasConfiguredTemplates(country: Country): Boolean {
-        return templateService.getTemplatesForCountry(country.name)
+        return templateService.getTemplatesForCountry(country.isoCode)
             .first().isNotEmpty()
     }
 }
