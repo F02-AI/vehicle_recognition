@@ -14,6 +14,7 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> NumericPlateValidator.validateAndFormatPlate(rawText)
             Country.UK -> UKPlateValidator.validateAndFormatPlate(rawText)
+            else -> NumericPlateValidator.validateAndFormatPlate(rawText) // Default to Israeli format
         }
     }
     
@@ -24,6 +25,7 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> NumericPlateValidator.isValidIsraeliFormat(plateText)
             Country.UK -> UKPlateValidator.isValidUkFormat(plateText)
+            else -> NumericPlateValidator.isValidIsraeliFormat(plateText) // Default to Israeli format
         }
     }
     
@@ -37,6 +39,7 @@ object CountryAwarePlateValidator {
                 // For UK, extract alphanumeric characters in sequence
                 text.replace(Regex("[^A-Z0-9]"), "").uppercase()
             }
+            else -> NumericPlateValidator.extractNumericOnly(text) // Default to Israeli format
         }
     }
     
@@ -47,6 +50,7 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> "Israeli format: NN-NNN-NN, NNN-NN-NNN"
             Country.UK -> "UK format: LLNN-LLL (e.g., AB12-XYZ)"
+            else -> "Israeli format: NN-NNN-NN, NNN-NN-NNN" // Default to Israeli format
         }
     }
     
@@ -54,6 +58,7 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> "NN-NNN-NN, NNN-NN-NNN"
             Country.UK -> "LLNN-LLL"
+            else -> "NN-NNN-NN, NNN-NN-NNN" // Default to Israeli format
         }
     }
 }

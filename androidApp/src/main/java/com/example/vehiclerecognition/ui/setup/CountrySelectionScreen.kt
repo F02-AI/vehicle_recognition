@@ -1,9 +1,11 @@
 package com.example.vehiclerecognition.ui.setup
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -12,12 +14,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.vehiclerecognition.data.models.Country
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,10 +113,7 @@ fun CountrySelectionScreen(
                                         style = MaterialTheme.typography.bodyLarge
                                     )
                                     Text(
-                                        text = when (country) {
-                                            Country.ISRAEL -> "Israeli license plates"
-                                            Country.UK -> "British license plates"
-                                        },
+                                        text = "${country.isoCode} license plates",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -151,7 +152,7 @@ fun CountrySelectionScreen(
                         text = when (selectedCountry) {
                             Country.ISRAEL -> "Israeli format: NN-NNN-NN, NNN-NN-NNN, N-NNNN-NN\nExample: 12-345-67"
                             Country.UK -> "UK format: LLNN-LLL\nExample: AB12-XYZ"
-                            else -> ""
+                            else -> "License plate format for ${selectedCountry?.displayName}"
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -202,8 +203,28 @@ fun CountryFlag(
         Image(
             painter = painterResource(id = flagResourceId),
             contentDescription = "${country.displayName} flag",
-            modifier = Modifier.size(size)
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
         )
+    } else {
+        // Fallback: Show country ISO code in a circular badge
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = country.isoCode,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = (size.value * 0.4f).sp
+                ),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 

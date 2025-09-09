@@ -1,14 +1,6 @@
 package com.example.vehiclerecognition.data.models
 
 /**
- * Countries supported for license plate recognition
- */
-enum class Country(val displayName: String, val flagResourceId: String) {
-    ISRAEL("Israel", "flag_israel"),
-    UK("United Kingdom", "flag_uk")
-}
-
-/**
  * Data class representing license plate recognition settings
  */
 data class LicensePlateSettings(

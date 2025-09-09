@@ -23,6 +23,7 @@ class CountryAwareLicensePlateValidator(
         return when (selectedCountry) {
             Country.ISRAEL -> NumericPlateValidator.isValidIsraeliFormat(licensePlate)
             Country.UK -> UKPlateValidator.isValidUkFormat(licensePlate)
+            else -> NumericPlateValidator.isValidIsraeliFormat(licensePlate) // Default to Israeli format
         }
     }
     
@@ -30,6 +31,7 @@ class CountryAwareLicensePlateValidator(
         return when (selectedCountry) {
             Country.ISRAEL -> NumericPlateValidator.validateAndFormatPlate(licensePlate)
             Country.UK -> UKPlateValidator.validateAndFormatPlate(licensePlate)
+            else -> NumericPlateValidator.validateAndFormatPlate(licensePlate) // Default to Israeli format
         }
     }
 }

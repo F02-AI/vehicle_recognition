@@ -159,6 +159,12 @@ class VehicleMatcher(
                 val entryChars = extractAlphanumericCharacters(entry)
                 detectedChars.isNotEmpty() && detectedChars == entryChars
             }
+            else -> {
+                // Default to Israeli format for all other countries
+                val detectedDigits = extractNumericDigits(detected)
+                val entryDigits = extractNumericDigits(entry)
+                detectedDigits.isNotEmpty() && detectedDigits == entryDigits
+            }
         }
     }
 

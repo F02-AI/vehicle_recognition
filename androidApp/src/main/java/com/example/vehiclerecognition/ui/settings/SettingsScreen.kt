@@ -376,6 +376,12 @@ fun CountryDropdown(
                 flagResourceId = "flag_gb", // Not used anymore, but keep for consistency
                 isEnabled = true
             )
+            else -> CountryModel(
+                id = selectedCountry.isoCode,
+                displayName = selectedCountry.displayName,
+                flagResourceId = selectedCountry.flagResourceId,
+                isEnabled = true
+            )
         }
     }
     
@@ -461,7 +467,7 @@ fun CountryDropdown(
                         val country = when (countryModel.id) {
                             "IL" -> Country.ISRAEL
                             "GB" -> Country.UK
-                            else -> Country.ISRAEL // Default fallback
+                            else -> Country.fromIsoCode(countryModel.id) ?: Country.ISRAEL // Use fromIsoCode or fallback to Israel
                         }
                         onCountrySelected(country)
                         expanded = false

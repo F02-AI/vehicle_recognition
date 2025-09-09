@@ -73,6 +73,15 @@ object PlateTextCandidateGenerator {
             // Some inputs/lists omit the dash
             "LLNNLLL"
         )
+        else -> listOf(
+            // Default to Israeli patterns for all other countries
+            "NN-NNN-NN",
+            "NNN-NN-NNN",
+            "N-NNNN-NN",
+            // Dashless variants to support inputs without separators
+            "NNNNNNN",
+            "NNNNNNNN"
+        )
     }
 
     /**
