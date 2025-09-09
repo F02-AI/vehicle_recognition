@@ -389,12 +389,9 @@ fun CountryDropdown(
         }
     }
     
-    // Get world countries - prioritize common ones
+    // Get world countries in alphabetical order
     val worldCountries = remember {
-        val priorityCountries = listOf("IL", "GB", "US", "CA", "AU", "DE", "FR", "IT", "ES", "NL")
-        val priority = WorldCountries.allCountries.filter { it.id in priorityCountries }
-        val others = WorldCountries.allCountries.filter { it.id !in priorityCountries }
-        priority + others
+        WorldCountries.allCountries.sortedBy { it.displayName }
     }
     
     ExposedDropdownMenuBox(
