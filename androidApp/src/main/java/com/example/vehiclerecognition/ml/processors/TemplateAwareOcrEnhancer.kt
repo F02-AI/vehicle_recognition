@@ -57,12 +57,18 @@ class TemplateAwareOcrEnhancer @Inject constructor(
      * Processes raw OCR text and attempts to match it against license plate templates
      * Returns the best matching formatted license plate or null if no valid match found
      */
-    suspend fun enhanceOcrResult(rawText: String, country: Country): OcrEnhancementResult {
+    suspend fun enhanceOcrResult(rawText: String, country: Country, debugLogger: ((String) -> Unit)? = null): OcrEnhancementResult {
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Enhancing OCR: rawText='$rawText', country=${country.displayName}")
+        debugLogger?.invoke("Template enhance: '$rawText' (${country.displayName})")
+        
         if (rawText.isEmpty()) {
             return OcrEnhancementResult(null, false, emptyList())
         }
         
         val templates = templateService.getTemplatesForCountry(country.isoCode).first()
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Found ${templates.size} templates for ${country.displayName}: ${templates.map { it.templatePattern }}")
+        debugLogger?.invoke("Found ${templates.size} templates: ${templates.map { it.templatePattern }}")
+        
         if (templates.isEmpty()) {
             return OcrEnhancementResult(
                 formattedPlate = rawText,
@@ -73,15 +79,20 @@ class TemplateAwareOcrEnhancer @Inject constructor(
         }
         
         val cleanedText = cleanOcrText(rawText)
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Cleaned text: '$cleanedText'")
+        
         val allPossibleTexts = generatePossibleTexts(cleanedText)
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Generated ${allPossibleTexts.size} possible texts: ${allPossibleTexts.take(5)}")
         
         // Try to match against each template
         val matches = mutableListOf<TemplateMatch>()
         
         for (template in templates.sortedBy { it.priority }) {
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Trying template: ${template.displayName} (${template.templatePattern})")
             for (possibleText in allPossibleTexts) {
                 val match = attemptTemplateMatch(possibleText, template)
                 if (match != null) {
+                    android.util.Log.d("TemplateAwareOcrEnhancer", "Match found: '$possibleText' -> '${match.formattedText}' (confidence: ${match.confidence})")
                     matches.add(match)
                 }
             }
@@ -92,7 +103,10 @@ class TemplateAwareOcrEnhancer @Inject constructor(
             compareBy<TemplateMatch> { it.confidence }.thenBy { -it.template.priority }
         )
         
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Best match: ${bestMatch?.let { "${it.formattedText} (confidence: ${it.confidence})" } ?: "none"}")
+        
         return if (bestMatch != null && bestMatch.confidence > 0.7f) {
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Using best match: ${bestMatch.formattedText}")
             OcrEnhancementResult(
                 formattedPlate = bestMatch.formattedText,
                 isValidFormat = true,
@@ -100,6 +114,7 @@ class TemplateAwareOcrEnhancer @Inject constructor(
                 message = "Matched template: ${bestMatch.template.displayName}"
             )
         } else {
+            android.util.Log.d("TemplateAwareOcrEnhancer", "No good match found, using cleaned text: '$cleanedText'")
             // No good template match, return cleaned text
             OcrEnhancementResult(
                 formattedPlate = cleanedText,

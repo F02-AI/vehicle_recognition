@@ -19,7 +19,10 @@ data class LicensePlateSettings(
     // Vehicle Color Detection Settings
     val enableGrayFiltering: Boolean = true, // Enable gray color filtering
     val grayExclusionThreshold: Float = 50.0f, // Percentage threshold to exclude gray (5-95)
-    val enableSecondaryColorDetection: Boolean = true // Enable detection of secondary vehicle colors
+    val enableSecondaryColorDetection: Boolean = true, // Enable detection of secondary vehicle colors
+    
+    // Debug logging callback (not persisted)
+    val debugLogger: ((String) -> Unit)? = null
 )
 
 /**

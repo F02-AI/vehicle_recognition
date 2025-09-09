@@ -3,6 +3,7 @@ package com.example.vehiclerecognition.ml.processors
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.RectF
+import android.util.Log
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
 import com.example.vehiclerecognition.data.models.PlateDetection
@@ -151,15 +152,26 @@ class LicensePlateProcessor @Inject constructor(
                                     
                                     // Apply template-based enhancement if we have raw OCR text
                                     val rawText = ocrResult.formattedText ?: ocrResult.text
+                                    Log.d("LicensePlateProcessor", "Raw OCR text: '$rawText' for country: ${settings.selectedCountry.displayName}")
+                                    // Also log to debug overlay if available
+                                    settings.debugLogger?.invoke("Raw OCR: '$rawText' (${settings.selectedCountry.displayName})")
+                                    
                                     val enhancementResult = if (rawText?.isNotBlank() == true) {
-                                        templateAwareEnhancer.enhanceOcrResult(rawText, settings.selectedCountry)
+                                        val result = templateAwareEnhancer.enhanceOcrResult(rawText, settings.selectedCountry, settings.debugLogger)
+                                        Log.d("LicensePlateProcessor", "Enhancement result: formatted='${result.formattedPlate}', isValid=${result.isValidFormat}, message='${result.message}'")
+                                        settings.debugLogger?.invoke("Enhancement: '${result.formattedPlate}' valid=${result.isValidFormat} msg='${result.message}'")
+                                        result
                                     } else {
+                                        Log.d("LicensePlateProcessor", "No raw text to enhance")
+                                        settings.debugLogger?.invoke("No raw text to enhance")
                                         null
                                     }
                                     
                                     // Use enhanced result if available and valid
                                     val finalText = enhancementResult?.formattedPlate ?: rawText
                                     val finalIsValid = enhancementResult?.isValidFormat ?: ocrResult.isValidFormat
+                                    Log.d("LicensePlateProcessor", "Final result: text='$finalText', isValid=$finalIsValid")
+                                    settings.debugLogger?.invoke("Final result: '$finalText' valid=$finalIsValid")
                                     
                                     // Return updated detection with enhanced OCR results
                                     detection.copy(

@@ -34,12 +34,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -127,13 +130,17 @@ fun LicensePlateTemplateContent(
     onDeleteTemplate: (Int) -> Unit,
     onSaveTemplates: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("License Plate Templates") },
                 actions = {
                     Button(
-                        onClick = onSaveTemplates,
+                        onClick = { 
+                            focusManager.clearFocus()
+                            onSaveTemplates()
+                        },
                         enabled = canSave && !isSaving,
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
@@ -157,7 +164,10 @@ fun LicensePlateTemplateContent(
                     .padding(paddingValues)
                     .padding(16.dp)
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState())
+                    .clickable {
+                        focusManager.clearFocus()
+                    },
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Template builder - always shown when country is selected
@@ -167,7 +177,9 @@ fun LicensePlateTemplateContent(
                     onTemplatePatternChanged = onTemplatePatternChanged,
                     onAddTemplate = onAddTemplate,
                     onDeleteTemplate = onDeleteTemplate,
-                    maxTemplates = 2
+                    maxTemplates = 2,
+                    focusManager = focusManager,
+                    onSave = onSaveTemplates
                 )
             }
         } else {
@@ -428,7 +440,9 @@ fun TemplateBuilderCard(
     onTemplatePatternChanged: (Int, String) -> Unit,
     onAddTemplate: () -> Unit,
     onDeleteTemplate: (Int) -> Unit,
-    maxTemplates: Int = 2
+    maxTemplates: Int = 2,
+    focusManager: androidx.compose.ui.focus.FocusManager? = null,
+    onSave: (() -> Unit)? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -478,7 +492,9 @@ fun TemplateBuilderCard(
                     validationError = validationErrors[index],
                     onPatternChanged = { pattern -> onTemplatePatternChanged(index, pattern) },
                     onDelete = { onDeleteTemplate(index) },
-                    canDelete = true // Always allow delete - will reset if only one template
+                    canDelete = true, // Always allow delete - will reset if only one template
+                    focusManager = focusManager,
+                    onSave = onSave
                 )
                 
                 if (index < templates.size - 1) {
@@ -501,8 +517,17 @@ fun TemplateEditor(
     validationError: String?,
     onPatternChanged: (String) -> Unit,
     onDelete: () -> Unit,
-    canDelete: Boolean
+    canDelete: Boolean,
+    focusManager: androidx.compose.ui.focus.FocusManager? = null,
+    onSave: (() -> Unit)? = null
 ) {
+    // Local state to manage TextFieldValue with cursor position
+    var textFieldValue by remember(template.pattern) {
+        mutableStateOf(TextFieldValue(
+            text = template.pattern,
+            selection = TextRange(template.pattern.length)
+        ))
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -552,8 +577,11 @@ fun TemplateEditor(
             ) {
                 // Pattern display/input
                 BasicTextField(
-                    value = template.pattern,
-                    onValueChange = onPatternChanged,
+                    value = textFieldValue,
+                    onValueChange = { newValue ->
+                        textFieldValue = newValue
+                        onPatternChanged(newValue.text)
+                    },
                     textStyle = TextStyle(
                         fontSize = 18.sp,
                         fontFamily = FontFamily.Monospace,
@@ -569,7 +597,10 @@ fun TemplateEditor(
                         imeAction = ImeAction.Done
                     ),
                     keyboardActions = KeyboardActions(
-                        onDone = { /* Keyboard will hide automatically */ }
+                        onDone = { 
+                            focusManager?.clearFocus()
+                            onSave?.invoke()
+                        }
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier
@@ -595,12 +626,26 @@ fun TemplateEditor(
                 // Pattern input buttons
                 PatternInputButtons(
                     onLetterClick = { 
-                        onPatternChanged(template.pattern + "L")
+                        val newText = textFieldValue.text + "L"
+                        textFieldValue = TextFieldValue(
+                            text = newText,
+                            selection = TextRange(newText.length)
+                        )
+                        onPatternChanged(newText)
                     },
                     onNumberClick = { 
-                        onPatternChanged(template.pattern + "N")
+                        val newText = textFieldValue.text + "N"
+                        textFieldValue = TextFieldValue(
+                            text = newText,
+                            selection = TextRange(newText.length)
+                        )
+                        onPatternChanged(newText)
                     },
                     onClearClick = {
+                        textFieldValue = TextFieldValue(
+                            text = "",
+                            selection = TextRange(0)
+                        )
                         onPatternChanged("")
                     }
                 )
@@ -634,10 +679,10 @@ fun TemplateEditor(
             }
             
             // Pattern preview
-            if (template.pattern.isNotBlank() && validationError == null) {
+            if (textFieldValue.text.isNotBlank() && validationError == null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Example: ${generatePatternExample(template.pattern)}",
+                    text = "Example: ${generatePatternExample(textFieldValue.text)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace

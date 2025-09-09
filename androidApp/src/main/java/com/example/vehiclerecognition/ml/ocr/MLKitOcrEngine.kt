@@ -7,6 +7,7 @@ import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.ml.processors.NumericPlateValidator
 import com.example.vehiclerecognition.ml.processors.CountryAwarePlateValidator
 import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -22,7 +23,9 @@ import kotlin.coroutines.resume
  * Enhanced to work optimally with pre-scaled images for better accuracy
  */
 @Singleton
-class MLKitOcrEngine @Inject constructor() : OcrEngine {
+class MLKitOcrEngine @Inject constructor(
+    private val templateService: LicensePlateTemplateService
+) : OcrEngine {
     
     companion object {
         private const val TAG = "MLKitOcrEngine"
@@ -74,8 +77,10 @@ class MLKitOcrEngine @Inject constructor() : OcrEngine {
                     }
             }
             
-            // Apply country-specific validation
-            val relevantText = CountryAwarePlateValidator.extractRelevantCharacters(result, currentCountry)
+            // Apply dynamic country-specific validation based on templates
+            Log.d(TAG, "ML Kit detected full text: '$result'")
+            val relevantText = CountryAwarePlateValidator.extractRelevantCharactersDynamic(result, currentCountry, templateService)
+            Log.d(TAG, "After dynamic extraction: '$result' -> '$relevantText'")
             val formattedText = CountryAwarePlateValidator.validateAndFormatPlate(relevantText, currentCountry)
             val isValidFormat = formattedText != null
             

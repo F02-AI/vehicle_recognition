@@ -2,6 +2,7 @@ package com.example.vehiclerecognition.ui.settings
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.sp
@@ -13,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -102,6 +104,7 @@ fun SettingsContent(
     onModeSelected: (DetectionMode) -> Unit,
     onLicensePlateSettingsChanged: (LicensePlateSettings) -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Settings") })
@@ -112,7 +115,10 @@ fun SettingsContent(
                 .padding(paddingValues)
                 .padding(16.dp)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .clickable {
+                    focusManager.clearFocus()
+                },
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Vehicle Detection Mode Settings
@@ -502,6 +508,7 @@ fun SettingsContentPreview() {
 fun LicensePlateTemplateConfigurationCard(
     selectedCountry: Country
 ) {
+    val focusManager = LocalFocusManager.current
     var showFullConfiguration by remember { mutableStateOf(false) }
     
     Card(
@@ -614,7 +621,10 @@ fun LicensePlateTemplateConfigurationCard(
                         
                         // Save button
                         Button(
-                            onClick = templateViewModel::saveTemplates,
+                            onClick = { 
+                                focusManager.clearFocus()
+                                templateViewModel.saveTemplates()
+                            },
                             enabled = canSave && !isSaving && !isSaved,
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(

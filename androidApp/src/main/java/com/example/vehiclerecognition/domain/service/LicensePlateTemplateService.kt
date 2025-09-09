@@ -37,6 +37,7 @@ class LicensePlateTemplateService @Inject constructor(
      * Gets all templates for a specific country
      */
     fun getTemplatesForCountry(countryId: String): Flow<List<LicensePlateTemplate>> {
+        android.util.Log.d("LicensePlateTemplateService", "Getting templates for countryId: '$countryId'")
         return repository.getTemplatesByCountry(countryId)
     }
     

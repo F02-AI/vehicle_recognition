@@ -126,6 +126,10 @@ class CameraViewModel @Inject constructor(
 
     private val _showDebugInfo = MutableStateFlow(false)
     val showDebugInfo: StateFlow<Boolean> = _showDebugInfo.asStateFlow()
+    
+    // Debug logs for troubleshooting
+    private val _debugLogs = MutableStateFlow<List<String>>(emptyList())
+    val debugLogs: StateFlow<List<String>> = _debugLogs.asStateFlow()
     // ---
 
     // Holds the latest settings collected from the repository
@@ -489,7 +493,8 @@ class CameraViewModel @Inject constructor(
                 val lpResultDeferred = if (needsLicensePlateDetection) {
                     async {
                         Log.d("CameraViewModel", "Starting parallel license plate detection")
-                        licensePlateRepository.processFrame(bitmap, currentSettings)
+                        val settingsWithDebugger = currentSettings.copy(debugLogger = ::addDebugLog)
+                        licensePlateRepository.processFrame(bitmap, settingsWithDebugger)
                     }
                 } else {
                     async {
@@ -1328,6 +1333,37 @@ class CameraViewModel @Inject constructor(
      */
     fun toggleDebugInfo() {
         _showDebugInfo.value = !_showDebugInfo.value
+    }
+    
+    /**
+     * Adds a debug log entry with timestamp
+     */
+    fun addDebugLog(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())
+        val logEntry = "[$timestamp] $message"
+        val currentLogs = _debugLogs.value.toMutableList()
+        currentLogs.add(logEntry)
+        
+        // Keep only the last 50 log entries to prevent memory issues
+        if (currentLogs.size > 50) {
+            currentLogs.removeAt(0)
+        }
+        
+        _debugLogs.value = currentLogs
+    }
+    
+    /**
+     * Clears all debug logs
+     */
+    fun clearDebugLogs() {
+        _debugLogs.value = emptyList()
+    }
+    
+    /**
+     * Gets all debug logs as a single string for copying
+     */
+    fun getDebugLogsAsString(): String {
+        return _debugLogs.value.joinToString("\n")
     }
     
     /**

@@ -28,11 +28,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect as ComposeRect
@@ -1233,22 +1236,20 @@ fun CameraScreen(
             TopAppBar(
                 title = { Text("Vehicle Recognition") },
                 actions = {
-                    // Debug icon for toggling debug overlay - HIDDEN
-                    /*
+                    // Debug icon for toggling debug logs overlay
                     IconButton(
                         onClick = { 
                             Log.d("CameraScreen", "Debug icon clicked!")
                             viewModel.toggleDebugInfo() 
                         }
                     ) {
-                        val showDebug = viewModel.showDebugInfo.collectAsState().value
+                        val showDebug by viewModel.showDebugInfo.collectAsState()
                         Icon(
                             imageVector = if (showDebug) Icons.Filled.BugReport else Icons.Outlined.BugReport,
-                            contentDescription = "Toggle Debug Info",
-                            tint = if (showDebug) Color.Red else Color.Black
+                            contentDescription = "Toggle Debug Logs",
+                            tint = if (showDebug) Color.Red else LocalContentColor.current
                         )
                     }
-                    */
                 }
             )
         }
@@ -1367,6 +1368,22 @@ fun CameraScreen(
                         }
                     }
                     
+                    // Debug logs overlay
+                    val showDebug by viewModel.showDebugInfo.collectAsState()
+                    val debugLogs by viewModel.debugLogs.collectAsState()
+                    
+                    if (showDebug) {
+                        DebugLogsOverlay(
+                            logs = debugLogs,
+                            onCopyLogs = {
+                                val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clipData = android.content.ClipData.newPlainText("Debug Logs", viewModel.getDebugLogsAsString())
+                                clipboardManager.setPrimaryClip(clipData)
+                            },
+                            onClearLogs = { viewModel.clearDebugLogs() },
+                            modifier = Modifier.align(Alignment.BottomStart)
+                        )
+                    }
 
                 }
             } else {
@@ -1393,6 +1410,81 @@ fun CameraScreen(
 // Helper to check if rationale should be shown (simplified)
 fun shouldShowRequestPermissionRationale(activity: android.app.Activity): Boolean {
     return androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
+}
+
+@Composable
+fun DebugLogsOverlay(
+    logs: List<String>,
+    onCopyLogs: () -> Unit,
+    onClearLogs: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .padding(8.dp)
+            .fillMaxWidth(0.9f)
+            .height(300.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.8f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Debug Logs",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Row {
+                    Button(
+                        onClick = onCopyLogs,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Blue),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Text("Copy", color = Color.White, fontSize = 12.sp)
+                    }
+                    
+                    Button(
+                        onClick = onClearLogs,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) {
+                        Text("Clear", color = Color.White, fontSize = 12.sp)
+                    }
+                }
+            }
+            
+            Divider(
+                color = Color.White.copy(alpha = 0.3f),
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+            
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(4.dp)
+            ) {
+                items(logs.reversed()) { log ->
+                    Text(
+                        text = log,
+                        color = Color.Green,
+                        fontSize = 10.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Preview(showBackground = true)
