@@ -25,9 +25,11 @@ import com.example.vehiclerecognition.data.models.Country
 import com.example.vehiclerecognition.data.models.WorldCountries
 import com.example.vehiclerecognition.data.models.DetectionMode
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.style.TextAlign
 import com.example.vehiclerecognition.domain.service.ConfigurationStatus
@@ -181,7 +183,9 @@ fun SettingsContent(
             }
             
             // License Plate Template Configuration
-            LicensePlateTemplateConfigurationCard()
+            LicensePlateTemplateConfigurationCard(
+                selectedCountry = licensePlateSettings.selectedCountry
+            )
             
             // Vehicle Color Detection Advanced Settings (only show when color-based mode is selected)
             if (selectedMode.involvesColor()) {
@@ -498,7 +502,9 @@ fun SettingsContentPreview() {
 }
 
 @Composable
-fun LicensePlateTemplateConfigurationCard() {
+fun LicensePlateTemplateConfigurationCard(
+    selectedCountry: Country
+) {
     var showFullConfiguration by remember { mutableStateOf(false) }
     
     Card(
@@ -551,11 +557,38 @@ fun LicensePlateTemplateConfigurationCard() {
         // Use the existing template configuration components without vertical scroll
         val templateViewModel: LicensePlateTemplateViewModel = hiltViewModel()
         val uiState by templateViewModel.uiState.collectAsState()
-        val selectedCountry by templateViewModel.selectedCountry.collectAsState()
+        val templateSelectedCountry by templateViewModel.selectedCountry.collectAsState()
         val templates by templateViewModel.templates.collectAsState()
         val validationErrors by templateViewModel.validationErrors.collectAsState()
         val isSaving by templateViewModel.isSaving.collectAsState()
+        val isSaved by templateViewModel.isSaved.collectAsState()
         val canSave by templateViewModel.canSave.collectAsState()
+        
+        // Sync the main settings country with the template ViewModel
+        LaunchedEffect(selectedCountry) {
+            // Convert Country enum to CountryModel for the template ViewModel
+            val countryModel = when (selectedCountry) {
+                Country.ISRAEL -> CountryModel(
+                    id = "IL",
+                    displayName = "Israel",
+                    flagResourceId = "flag_israel",
+                    isEnabled = true
+                )
+                Country.UK -> CountryModel(
+                    id = "GB", 
+                    displayName = "United Kingdom",
+                    flagResourceId = "flag_uk",
+                    isEnabled = true
+                )
+                else -> CountryModel(
+                    id = selectedCountry.isoCode,
+                    displayName = selectedCountry.displayName,
+                    flagResourceId = selectedCountry.flagResourceId,
+                    isEnabled = true
+                )
+            }
+            templateViewModel.selectCountry(countryModel)
+        }
 
         when (val state = uiState) {
             is TemplateUiState.Loading -> {
@@ -568,21 +601,11 @@ fun LicensePlateTemplateConfigurationCard() {
             }
             is TemplateUiState.Success -> {
                 // Embed the template configuration content without scaffold/scrolling
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Configuration status card
-                    ConfigurationStatusCard(state.configurationStatus)
-                    
-                    // Country selection
-                    CountrySelectionCard(
-                        availableCountries = state.availableCountries,
-                        selectedCountry = selectedCountry,
-                        onCountrySelected = templateViewModel::selectCountry
-                    )
-                    
-                    // Template builder
-                    if (selectedCountry != null) {
+                if (templateSelectedCountry != null) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Template builder - always shown when country is selected
                         TemplateBuilderCard(
                             templates = templates,
                             validationErrors = validationErrors,
@@ -591,29 +614,73 @@ fun LicensePlateTemplateConfigurationCard() {
                             onDeleteTemplate = templateViewModel::deleteTemplate,
                             maxTemplates = 2
                         )
-                    }
-                    
-                    // Save button
-                    Button(
-                        onClick = templateViewModel::saveTemplates,
-                        enabled = canSave && !isSaving,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isSaving) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Text("Saving...")
+                        
+                        // Save button
+                        Button(
+                            onClick = templateViewModel::saveTemplates,
+                            enabled = canSave && !isSaving && !isSaved,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSaved) {
+                                    Color(0xFF4CAF50) // Green color for saved state
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                                disabledContainerColor = if (isSaved) {
+                                    Color(0xFF4CAF50) // Keep green when disabled in saved state
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                }
+                            )
+                        ) {
+                            when {
+                                isSaving -> {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                        Text("Saving...")
+                                    }
+                                }
+                                isSaved -> {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = Color.White
+                                        )
+                                        Text(
+                                            "Saved",
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                                else -> Text("Save Templates")
                             }
-                        } else {
-                            Text("Save Templates")
                         }
+                    }
+                } else {
+                    // Show message when no country is selected
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Please select a country to configure license plate templates",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(32.dp)
+                        )
                     }
                 }
             }

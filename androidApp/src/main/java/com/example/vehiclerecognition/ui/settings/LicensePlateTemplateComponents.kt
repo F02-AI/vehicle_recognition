@@ -76,14 +76,11 @@ fun LicensePlateTemplateScreen(
         }
         is TemplateUiState.Success -> {
             LicensePlateTemplateContent(
-                availableCountries = state.availableCountries,
-                configurationStatus = state.configurationStatus,
                 selectedCountry = selectedCountry,
                 templates = templates,
                 validationErrors = validationErrors,
                 isSaving = isSaving,
                 canSave = canSave,
-                onCountrySelected = viewModel::selectCountry,
                 onTemplatePatternChanged = viewModel::updateTemplatePattern,
                 onAddTemplate = viewModel::addTemplate,
                 onDeleteTemplate = viewModel::deleteTemplate,
@@ -120,14 +117,11 @@ fun LicensePlateTemplateScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LicensePlateTemplateContent(
-    availableCountries: List<CountryModel>,
-    configurationStatus: ConfigurationStatus,
     selectedCountry: CountryModel?,
     templates: List<EditableTemplate>,
     validationErrors: Map<Int, String>,
     isSaving: Boolean,
     canSave: Boolean,
-    onCountrySelected: (CountryModel) -> Unit,
     onTemplatePatternChanged: (Int, String) -> Unit,
     onAddTemplate: () -> Unit,
     onDeleteTemplate: (Int) -> Unit,
@@ -157,26 +151,16 @@ fun LicensePlateTemplateContent(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .padding(paddingValues)
-                .padding(16.dp)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Configuration status card
-            ConfigurationStatusCard(configurationStatus)
-            
-            // Country selection
-            CountrySelectionCard(
-                availableCountries = availableCountries,
-                selectedCountry = selectedCountry,
-                onCountrySelected = onCountrySelected
-            )
-            
-            // Template builder
-            if (selectedCountry != null) {
+        if (selectedCountry != null) {
+            Column(
+                modifier = Modifier
+                    .padding(paddingValues)
+                    .padding(16.dp)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Template builder - always shown when country is selected
                 TemplateBuilderCard(
                     templates = templates,
                     validationErrors = validationErrors,
@@ -184,6 +168,22 @@ fun LicensePlateTemplateContent(
                     onAddTemplate = onAddTemplate,
                     onDeleteTemplate = onDeleteTemplate,
                     maxTemplates = 2
+                )
+            }
+        } else {
+            // Show message when no country is selected
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Please select a country to configure license plate templates",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(32.dp)
                 )
             }
         }
@@ -478,7 +478,7 @@ fun TemplateBuilderCard(
                     validationError = validationErrors[index],
                     onPatternChanged = { pattern -> onTemplatePatternChanged(index, pattern) },
                     onDelete = { onDeleteTemplate(index) },
-                    canDelete = templates.size > 1
+                    canDelete = true // Always allow delete - will reset if only one template
                 )
                 
                 if (index < templates.size - 1) {

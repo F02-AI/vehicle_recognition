@@ -144,12 +144,8 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
         }
         
         // Check for minimum requirements
-        if (!pattern.contains('L')) {
-            return TemplateValidationResult(false, "Template pattern must contain at least one letter (L)")
-        }
-        
-        if (!pattern.contains('N')) {
-            return TemplateValidationResult(false, "Template pattern must contain at least one number (N)")
+        if (pattern.length < TemplateValidationRules.MIN_TEMPLATE_LENGTH) {
+            return TemplateValidationResult(false, "Template pattern must contain at least ${TemplateValidationRules.MIN_TEMPLATE_LENGTH} elements")
         }
         
         // Add warnings for unusual patterns

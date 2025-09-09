@@ -136,58 +136,11 @@ class LicensePlateTemplateService @Inject constructor(
     }
     
     /**
-     * Creates default templates for a country based on common patterns
+     * Creates empty templates for any country - users define their own patterns
      */
     fun createDefaultTemplatesForCountry(countryId: String): List<LicensePlateTemplate> {
-        return when (countryId) {
-            "ISRAEL" -> listOf(
-                LicensePlateTemplate(
-                    countryId = countryId,
-                    templatePattern = "NNNNNN",
-                    displayName = "6-digit format",
-                    priority = 1,
-                    description = TemplateValidationRules.generateDescription("NNNNNN"),
-                    regexPattern = TemplateValidationRules.templatePatternToRegex("NNNNNN")
-                ),
-                LicensePlateTemplate(
-                    countryId = countryId,
-                    templatePattern = "NNNNNNN",
-                    displayName = "7-digit format",
-                    priority = 2,
-                    description = TemplateValidationRules.generateDescription("NNNNNNN"),
-                    regexPattern = TemplateValidationRules.templatePatternToRegex("NNNNNNN")
-                )
-            )
-            "UK" -> listOf(
-                LicensePlateTemplate(
-                    countryId = countryId,
-                    templatePattern = "LLNNLLL",
-                    displayName = "Standard UK format",
-                    priority = 1,
-                    description = TemplateValidationRules.generateDescription("LLNNLLL"),
-                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLNNLLL")
-                )
-            )
-            "SINGAPORE" -> listOf(
-                LicensePlateTemplate(
-                    countryId = countryId,
-                    templatePattern = "LLLNNNNL",
-                    displayName = "Standard format",
-                    priority = 1,
-                    description = TemplateValidationRules.generateDescription("LLLNNNNL"),
-                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLLNNNNL")
-                ),
-                LicensePlateTemplate(
-                    countryId = countryId,
-                    templatePattern = "LLLNNL",
-                    displayName = "Alternative format",
-                    priority = 2,
-                    description = TemplateValidationRules.generateDescription("LLLNNL"),
-                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLLNNL")
-                )
-            )
-            else -> emptyList()
-        }
+        // Always return empty list - users should define their own templates
+        return emptyList()
     }
 }
 

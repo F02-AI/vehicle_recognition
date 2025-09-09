@@ -8,7 +8,7 @@ import com.example.vehiclerecognition.data.models.LicensePlateTemplate
 object TemplateValidationRules {
     
     // Constants for validation
-    const val MIN_TEMPLATE_LENGTH = 3
+    const val MIN_TEMPLATE_LENGTH = 2
     const val MAX_TEMPLATE_LENGTH = 12
     const val MAX_TEMPLATES_PER_COUNTRY = 2
     
@@ -37,13 +37,9 @@ object TemplateValidationRules {
                 errors.add("Template pattern contains invalid characters: ${invalidChars.toSet().joinToString(", ")}")
             }
             
-            // Must contain both letters and numbers
-            if (!pattern.contains('L')) {
-                errors.add("Template pattern must contain at least one letter (L)")
-            }
-            
-            if (!pattern.contains('N')) {
-                errors.add("Template pattern must contain at least one number (N)")
+            // Must contain at least 2 elements (any combination of L and N)
+            if (pattern.length < 2) {
+                errors.add("Template pattern must contain at least 2 elements")
             }
             
             // Business rule warnings

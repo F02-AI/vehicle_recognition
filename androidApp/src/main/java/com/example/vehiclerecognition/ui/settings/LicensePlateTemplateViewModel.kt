@@ -15,8 +15,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 
 /**
@@ -49,13 +51,17 @@ class LicensePlateTemplateViewModel @Inject constructor(
     private val _isSaving = MutableStateFlow(false)
     val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
     
+    private val _isSaved = MutableStateFlow(false)
+    val isSaved: StateFlow<Boolean> = _isSaved.asStateFlow()
+    
     // Combined state for UI to determine if save button should be enabled
     val canSave: StateFlow<Boolean> = combine(
         _templates,
         _validationErrors,
-        _isSaving
-    ) { templates, errors, saving ->
-        !saving && 
+        _isSaving,
+        _isSaved
+    ) { templates, errors, saving, saved ->
+        !saving && !saved &&
         templates.isNotEmpty() && 
         templates.any { it.pattern.isNotBlank() } &&
         errors.isEmpty()
@@ -110,49 +116,35 @@ class LicensePlateTemplateViewModel @Inject constructor(
 
     private suspend fun loadTemplatesForCountry(countryId: String) {
         try {
-            templateService.getTemplatesForCountry(countryId).collect { existingTemplates ->
-                val editableTemplates = if (existingTemplates.isEmpty()) {
-                    // Create default templates for the country
-                    val defaults = templateService.createDefaultTemplatesForCountry(countryId)
-                    defaults.map { template ->
-                        EditableTemplate(
-                            id = 0, // New template
-                            pattern = template.templatePattern,
-                            displayName = template.displayName,
-                            priority = template.priority,
-                            isValid = true,
-                            validationMessage = null
-                        )
-                    }.ifEmpty {
-                        // If no defaults available, create empty templates
-                        listOf(
-                            EditableTemplate(
-                                id = 0,
-                                pattern = "",
-                                displayName = "Template 1",
-                                priority = 1,
-                                isValid = false,
-                                validationMessage = null
-                            )
-                        )
-                    }
-                } else {
-                    // Convert existing templates to editable format
-                    existingTemplates.map { template ->
-                        EditableTemplate(
-                            id = template.id,
-                            pattern = template.templatePattern,
-                            displayName = template.displayName,
-                            priority = template.priority,
-                            isValid = true,
-                            validationMessage = null
-                        )
-                    }
+            val existingTemplates = templateService.getTemplatesForCountry(countryId).first()
+            val editableTemplates = if (existingTemplates.isEmpty()) {
+                // No existing templates - provide one empty template for user to configure
+                listOf(
+                    EditableTemplate(
+                        id = 0,
+                        pattern = "",
+                        displayName = "Template 1",
+                        priority = 1,
+                        isValid = false,
+                        validationMessage = null
+                    )
+                )
+            } else {
+                // Convert existing templates to editable format
+                existingTemplates.map { template ->
+                    EditableTemplate(
+                        id = template.id,
+                        pattern = template.templatePattern,
+                        displayName = template.displayName,
+                        priority = template.priority,
+                        isValid = true,
+                        validationMessage = null
+                    )
                 }
-                
-                _templates.value = editableTemplates
-                validateAllTemplates()
             }
+            
+            _templates.value = editableTemplates
+            validateAllTemplates()
         } catch (e: Exception) {
             Log.e(TAG, "Error loading templates for country: $countryId", e)
         }
@@ -187,7 +179,9 @@ class LicensePlateTemplateViewModel @Inject constructor(
 
     fun deleteTemplate(index: Int) {
         val currentTemplates = _templates.value.toMutableList()
-        if (index >= 0 && index < currentTemplates.size && currentTemplates.size > 1) {
+        if (index >= 0 && index < currentTemplates.size) {
+            if (currentTemplates.size > 1) {
+                // Multiple templates: remove the template
             currentTemplates.removeAt(index)
             // Update priorities
             currentTemplates.forEachIndexed { i, template ->
@@ -211,6 +205,25 @@ class LicensePlateTemplateViewModel @Inject constructor(
                 }
             }
             _validationErrors.value = adjustedErrors
+            } else {
+                // Single template: reset it to empty
+                currentTemplates[index] = EditableTemplate(
+                    id = 0,
+                    pattern = "",
+                    displayName = "Template 1",
+                    priority = 1,
+                    isValid = false,
+                    validationMessage = null
+                )
+                _templates.value = currentTemplates
+                
+                // Clear validation errors for this template
+                val currentErrors = _validationErrors.value.toMutableMap()
+                currentErrors.remove(index)
+                _validationErrors.value = currentErrors
+            }
+            
+            validateAllTemplates()
         }
     }
 
@@ -306,6 +319,13 @@ class LicensePlateTemplateViewModel @Inject constructor(
                     Log.i(TAG, "Templates saved successfully: ${result.message}")
                     // Refresh configuration status
                     _configurationStatus.value = templateService.getConfigurationStatus()
+                    // Reload templates to reflect the saved state
+                    loadTemplatesForCountry(selectedCountry.id)
+                    
+                    // Show saved state for 2 seconds
+                    _isSaved.value = true
+                    delay(2000)
+                    _isSaved.value = false
                 } else {
                     Log.e(TAG, "Failed to save templates: ${result.message}")
                     _uiState.value = TemplateUiState.Error("Failed to save templates: ${result.message}")
