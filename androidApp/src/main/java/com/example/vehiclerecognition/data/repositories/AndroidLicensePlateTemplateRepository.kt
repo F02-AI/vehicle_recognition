@@ -4,11 +4,13 @@ import com.example.vehiclerecognition.data.db.CountryDao
 import com.example.vehiclerecognition.data.db.CountryEntity
 import com.example.vehiclerecognition.data.db.LicensePlateTemplateDao
 import com.example.vehiclerecognition.data.db.LicensePlateTemplateEntity
-import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.data.models.LicensePlateTemplate
+import com.example.vehiclerecognition.data.models.WorldCountries
 import com.example.vehiclerecognition.domain.repository.LicensePlateTemplateRepository
 import com.example.vehiclerecognition.domain.repository.PlateValidationResult
 import com.example.vehiclerecognition.domain.repository.TemplateValidationResult
+import com.example.vehiclerecognition.domain.validation.TemplateValidationRules
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -23,13 +25,13 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
     private val templateDao: LicensePlateTemplateDao
 ) : LicensePlateTemplateRepository {
     
-    override fun getAllEnabledCountries(): Flow<List<Country>> {
+    override fun getAllEnabledCountries(): Flow<List<CountryModel>> {
         return countryDao.getAllEnabledCountries().map { entities ->
             entities.map { it.toDomainModel() }
         }
     }
     
-    override suspend fun getCountryById(countryId: String): Country? {
+    override suspend fun getCountryById(countryId: String): CountryModel? {
         return countryDao.getCountryById(countryId)?.toDomainModel()
     }
     
@@ -38,33 +40,31 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
     }
     
     override suspend fun initializeDefaultCountries() {
-        val existingCountries = countryDao.getAllCountries()
+        val existingCountries = countryDao.getAllCountriesSync()
         
-        // Check if default countries already exist
-        val defaultCountries = listOf(
-            CountryEntity(
-                id = "ISRAEL",
-                displayName = "Israel",
-                flagResourceId = "flag_israel"
-            ),
-            CountryEntity(
-                id = "UK",
-                displayName = "United Kingdom",
-                flagResourceId = "flag_uk"
-            ),
-            CountryEntity(
-                id = "SINGAPORE",
-                displayName = "Singapore",
-                flagResourceId = "flag_singapore"
-            )
-        )
+        // Initialize all world countries if not already present
+        val worldCountriesToInsert = WorldCountries.allCountries
+            .filter { worldCountry -> 
+                existingCountries.none { it.id == worldCountry.id } 
+            }
+            .map { worldCountry ->
+                CountryEntity(
+                    id = worldCountry.id,
+                    displayName = worldCountry.displayName,
+                    flagResourceId = worldCountry.flagResourceId,
+                    isEnabled = worldCountry.isEnabled
+                )
+            }
         
-        countryDao.insertCountries(defaultCountries)
+        if (worldCountriesToInsert.isNotEmpty()) {
+            countryDao.insertCountries(worldCountriesToInsert)
+        }
         
-        // Initialize default templates for existing countries
-        initializeDefaultTemplatesForCountry("ISRAEL", listOf("NNNNNN", "NNNNNNN"))
-        initializeDefaultTemplatesForCountry("UK", listOf("LLNNLLL"))
-        initializeDefaultTemplatesForCountry("SINGAPORE", listOf("LLLNNNNL", "LLLNNL"))
+        // Initialize default templates for key countries only
+        initializeDefaultTemplatesForCountry("IL", listOf("NNNNNN", "NNNNNNN"))
+        initializeDefaultTemplatesForCountry("GB", listOf("LLNNLLL"))
+        initializeDefaultTemplatesForCountry("SG", listOf("LLLNNNNL", "LLLNNL"))
+        initializeDefaultTemplatesForCountry("US", listOf("LLLNNNN"))
     }
     
     private suspend fun initializeDefaultTemplatesForCountry(countryId: String, patterns: List<String>) {
@@ -76,8 +76,8 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
                     templatePattern = pattern,
                     displayName = if (index == 0) "Primary Format" else "Alternative Format",
                     priority = index + 1,
-                    description = LicensePlateTemplate.generateDescription(pattern),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex(pattern)
+                    description = TemplateValidationRules.generateDescription(pattern),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex(pattern)
                 )
             }
             templateDao.insertTemplates(templates)
@@ -121,7 +121,7 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
         templateDao.replaceTemplatesForCountry(countryId, entities)
     }
     
-    override suspend fun getCountriesWithoutTemplates(): List<Country> {
+    override suspend fun getCountriesWithoutTemplates(): List<CountryModel> {
         return templateDao.getCountriesWithoutTemplates().map { it.toDomainModel() }
     }
     
@@ -133,8 +133,8 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
             return TemplateValidationResult(false, "Template pattern cannot be empty")
         }
         
-        if (pattern.length > LicensePlateTemplate.MAX_TEMPLATE_LENGTH) {
-            return TemplateValidationResult(false, "Template pattern cannot exceed ${LicensePlateTemplate.MAX_TEMPLATE_LENGTH} characters")
+        if (pattern.length > TemplateValidationRules.MAX_TEMPLATE_LENGTH) {
+            return TemplateValidationResult(false, "Template pattern cannot exceed ${TemplateValidationRules.MAX_TEMPLATE_LENGTH} characters")
         }
         
         // Check for invalid characters
@@ -173,8 +173,9 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
         
         // Try to match against templates in priority order
         for (template in templates.sortedBy { it.priority }) {
-            val formattedPlate = template.formatPlateText(plateText)
-            if (formattedPlate != null) {
+            val formattedPlate = TemplateValidationRules.formatPlateText(plateText)
+            val regex = Regex(template.regexPattern)
+            if (regex.matches(formattedPlate)) {
                 return PlateValidationResult(
                     isValid = true,
                     matchedTemplate = template,
@@ -188,8 +189,15 @@ class AndroidLicensePlateTemplateRepository @Inject constructor(
 }
 
 // Extension functions for mapping between domain and entity models
-private fun CountryEntity.toDomainModel(): Country {
-    return Country.entries.find { it.name == this.id } ?: Country.ISRAEL
+private fun CountryEntity.toDomainModel(): CountryModel {
+    return CountryModel(
+        id = id,
+        displayName = displayName,
+        flagResourceId = flagResourceId,
+        isEnabled = isEnabled,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
 }
 
 private fun LicensePlateTemplateEntity.toDomainModel(): LicensePlateTemplate {

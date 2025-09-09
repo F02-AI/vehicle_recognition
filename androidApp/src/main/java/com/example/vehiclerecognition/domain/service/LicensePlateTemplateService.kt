@@ -1,10 +1,11 @@
 package com.example.vehiclerecognition.domain.service
 
-import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.data.models.LicensePlateTemplate
 import com.example.vehiclerecognition.domain.repository.LicensePlateTemplateRepository
 import com.example.vehiclerecognition.domain.repository.PlateValidationResult
 import com.example.vehiclerecognition.domain.repository.TemplateValidationResult
+import com.example.vehiclerecognition.domain.validation.TemplateValidationRules
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -28,7 +29,7 @@ class LicensePlateTemplateService @Inject constructor(
     /**
      * Gets all countries available for template configuration
      */
-    fun getAvailableCountries(): Flow<List<Country>> {
+    fun getAvailableCountries(): Flow<List<CountryModel>> {
         return repository.getAllEnabledCountries()
     }
     
@@ -110,35 +111,27 @@ class LicensePlateTemplateService @Inject constructor(
     }
     
     /**
-     * Gets countries that need template configuration (for warning display)
+     * Gets countries that have been configured with templates
      */
-    suspend fun getCountriesNeedingConfiguration(): List<Country> {
-        return repository.getCountriesWithoutTemplates()
-    }
-    
-    /**
-     * Checks if the system is properly configured
-     */
-    suspend fun isSystemConfigured(): Boolean {
-        val countriesWithoutTemplates = getCountriesNeedingConfiguration()
-        return countriesWithoutTemplates.isEmpty()
+    suspend fun getConfiguredCountries(): List<CountryModel> {
+        val allCountries = repository.getAllEnabledCountries().first()
+        return allCountries.filter { country ->
+            repository.hasActiveTemplatesForCountry(country.id)
+        }
     }
     
     /**
      * Gets configuration status for UI display
+     * Only considers countries that user has actively configured
      */
     suspend fun getConfigurationStatus(): ConfigurationStatus {
-        val allCountries = repository.getAllEnabledCountries().first()
-        val countriesWithoutTemplates = getCountriesNeedingConfiguration()
-        
-        val configuredCount = allCountries.size - countriesWithoutTemplates.size
-        val totalCount = allCountries.size
+        val configuredCountries = getConfiguredCountries()
         
         return ConfigurationStatus(
-            totalCountries = totalCount,
-            configuredCountries = configuredCount,
-            needsConfiguration = countriesWithoutTemplates,
-            isFullyConfigured = countriesWithoutTemplates.isEmpty()
+            totalCountries = configuredCountries.size,
+            configuredCountries = configuredCountries.size,
+            needsConfiguration = emptyList(), // No warnings for unconfigured countries
+            isFullyConfigured = true // Always considered configured since only voluntary configuration
         )
     }
     
@@ -153,16 +146,16 @@ class LicensePlateTemplateService @Inject constructor(
                     templatePattern = "NNNNNN",
                     displayName = "6-digit format",
                     priority = 1,
-                    description = LicensePlateTemplate.generateDescription("NNNNNN"),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex("NNNNNN")
+                    description = TemplateValidationRules.generateDescription("NNNNNN"),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex("NNNNNN")
                 ),
                 LicensePlateTemplate(
                     countryId = countryId,
                     templatePattern = "NNNNNNN",
                     displayName = "7-digit format",
                     priority = 2,
-                    description = LicensePlateTemplate.generateDescription("NNNNNNN"),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex("NNNNNNN")
+                    description = TemplateValidationRules.generateDescription("NNNNNNN"),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex("NNNNNNN")
                 )
             )
             "UK" -> listOf(
@@ -171,8 +164,8 @@ class LicensePlateTemplateService @Inject constructor(
                     templatePattern = "LLNNLLL",
                     displayName = "Standard UK format",
                     priority = 1,
-                    description = LicensePlateTemplate.generateDescription("LLNNLLL"),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex("LLNNLLL")
+                    description = TemplateValidationRules.generateDescription("LLNNLLL"),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLNNLLL")
                 )
             )
             "SINGAPORE" -> listOf(
@@ -181,16 +174,16 @@ class LicensePlateTemplateService @Inject constructor(
                     templatePattern = "LLLNNNNL",
                     displayName = "Standard format",
                     priority = 1,
-                    description = LicensePlateTemplate.generateDescription("LLLNNNNL"),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex("LLLNNNNL")
+                    description = TemplateValidationRules.generateDescription("LLLNNNNL"),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLLNNNNL")
                 ),
                 LicensePlateTemplate(
                     countryId = countryId,
                     templatePattern = "LLLNNL",
                     displayName = "Alternative format",
                     priority = 2,
-                    description = LicensePlateTemplate.generateDescription("LLLNNL"),
-                    regexPattern = LicensePlateTemplate.templatePatternToRegex("LLLNNL")
+                    description = TemplateValidationRules.generateDescription("LLLNNL"),
+                    regexPattern = TemplateValidationRules.templatePatternToRegex("LLLNNL")
                 )
             )
             else -> emptyList()
@@ -213,6 +206,6 @@ data class TemplateOperationResult(
 data class ConfigurationStatus(
     val totalCountries: Int,
     val configuredCountries: Int,
-    val needsConfiguration: List<Country>,
+    val needsConfiguration: List<CountryModel>,
     val isFullyConfigured: Boolean
 )

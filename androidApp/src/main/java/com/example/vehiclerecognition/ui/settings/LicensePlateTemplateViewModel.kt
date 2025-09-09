@@ -3,12 +3,13 @@ package com.example.vehiclerecognition.ui.settings
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.data.models.LicensePlateTemplate
 import com.example.vehiclerecognition.domain.repository.TemplateValidationResult
 import com.example.vehiclerecognition.domain.service.ConfigurationStatus
 import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
 import com.example.vehiclerecognition.domain.service.TemplateOperationResult
+import com.example.vehiclerecognition.domain.validation.TemplateValidationRules
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,8 +34,8 @@ class LicensePlateTemplateViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<TemplateUiState>(TemplateUiState.Loading)
     val uiState: StateFlow<TemplateUiState> = _uiState.asStateFlow()
     
-    private val _selectedCountry = MutableStateFlow<Country?>(null)
-    val selectedCountry: StateFlow<Country?> = _selectedCountry.asStateFlow()
+    private val _selectedCountry = MutableStateFlow<CountryModel?>(null)
+    val selectedCountry: StateFlow<CountryModel?> = _selectedCountry.asStateFlow()
     
     private val _templates = MutableStateFlow<List<EditableTemplate>>(emptyList())
     val templates: StateFlow<List<EditableTemplate>> = _templates.asStateFlow()
@@ -98,12 +99,12 @@ class LicensePlateTemplateViewModel @Inject constructor(
         }
     }
 
-    fun selectCountry(country: Country) {
+    fun selectCountry(country: CountryModel) {
         if (_selectedCountry.value == country) return
         
         viewModelScope.launch {
             _selectedCountry.value = country
-            loadTemplatesForCountry(country.name)
+            loadTemplatesForCountry(country.id)
         }
     }
 
@@ -224,12 +225,12 @@ class LicensePlateTemplateViewModel @Inject constructor(
                     // Create a temporary template for validation
                     val tempTemplate = LicensePlateTemplate(
                         id = 0,
-                        countryId = _selectedCountry.value?.name ?: "",
+                        countryId = _selectedCountry.value?.id ?: "",
                         templatePattern = pattern,
                         displayName = "Template ${index + 1}",
                         priority = index + 1,
-                        description = LicensePlateTemplate.generateDescription(pattern),
-                        regexPattern = LicensePlateTemplate.templatePatternToRegex(pattern)
+                        description = TemplateValidationRules.generateDescription(pattern),
+                        regexPattern = TemplateValidationRules.templatePatternToRegex(pattern)
                     )
                     
                     // Basic pattern validation
@@ -290,16 +291,16 @@ class LicensePlateTemplateViewModel @Inject constructor(
                 val licenseTemplates = validTemplates.map { editableTemplate ->
                     LicensePlateTemplate(
                         id = editableTemplate.id,
-                        countryId = selectedCountry.name,
+                        countryId = selectedCountry.id,
                         templatePattern = editableTemplate.pattern,
                         displayName = editableTemplate.displayName,
                         priority = editableTemplate.priority,
-                        description = LicensePlateTemplate.generateDescription(editableTemplate.pattern),
-                        regexPattern = LicensePlateTemplate.templatePatternToRegex(editableTemplate.pattern)
+                        description = TemplateValidationRules.generateDescription(editableTemplate.pattern),
+                        regexPattern = TemplateValidationRules.templatePatternToRegex(editableTemplate.pattern)
                     )
                 }
                 
-                val result = templateService.saveTemplatesForCountry(selectedCountry.name, licenseTemplates)
+                val result = templateService.saveTemplatesForCountry(selectedCountry.id, licenseTemplates)
                 
                 if (result.success) {
                     Log.i(TAG, "Templates saved successfully: ${result.message}")
@@ -334,7 +335,7 @@ class LicensePlateTemplateViewModel @Inject constructor(
 sealed interface TemplateUiState {
     object Loading : TemplateUiState
     data class Success(
-        val availableCountries: List<Country>,
+        val availableCountries: List<CountryModel>,
         val configurationStatus: ConfigurationStatus
     ) : TemplateUiState
     data class Error(val message: String) : TemplateUiState

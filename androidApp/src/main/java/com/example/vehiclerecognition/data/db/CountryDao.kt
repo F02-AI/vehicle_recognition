@@ -19,6 +19,9 @@ interface CountryDao {
     @Query("SELECT * FROM countries ORDER BY display_name ASC")
     fun getAllCountries(): Flow<List<CountryEntity>>
     
+    @Query("SELECT * FROM countries ORDER BY display_name ASC")
+    suspend fun getAllCountriesSync(): List<CountryEntity>
+    
     @Query("SELECT * FROM countries WHERE id = :countryId")
     suspend fun getCountryById(countryId: String): CountryEntity?
     

@@ -219,6 +219,38 @@ object TemplateValidationRules {
         
         return suggestions
     }
+    
+    /**
+     * Generates a human-readable description for a template pattern
+     */
+    fun generateDescription(pattern: String): String {
+        if (pattern.isEmpty()) return "Empty pattern"
+        
+        val letterCount = pattern.count { it == 'L' }
+        val numberCount = pattern.count { it == 'N' }
+        
+        return when {
+            letterCount == 0 -> "$numberCount numbers"
+            numberCount == 0 -> "$letterCount letters"
+            else -> "$letterCount letters, $numberCount numbers"
+        }
+    }
+    
+    /**
+     * Converts a template pattern to a regex pattern for validation
+     */
+    fun templatePatternToRegex(pattern: String): String {
+        return pattern
+            .replace("L", "[A-Z]")
+            .replace("N", "[0-9]")
+    }
+    
+    /**
+     * Formats plate text according to common conventions
+     */
+    fun formatPlateText(plateText: String): String {
+        return plateText.replace(Regex("[^A-Z0-9]"), "").uppercase()
+    }
 }
 
 /**

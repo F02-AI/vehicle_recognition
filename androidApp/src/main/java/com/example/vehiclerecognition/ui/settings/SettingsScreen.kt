@@ -3,6 +3,8 @@ package com.example.vehiclerecognition.ui.settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -18,13 +20,21 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.vehiclerecognition.data.models.LicensePlateSettings
 import com.example.vehiclerecognition.data.models.OcrModelType
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.WorldCountries
 import com.example.vehiclerecognition.data.models.DetectionMode
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.style.TextAlign
 import com.example.vehiclerecognition.domain.service.ConfigurationStatus
+
+// Import template configuration components
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 
 // Extension function to get the display string for DetectionMode with proper separators
 fun DetectionMode.toDisplayString(): String {
@@ -350,14 +360,39 @@ fun CountryDropdown(
     onCountrySelected: (Country) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val context = LocalContext.current
+    
+    // Convert current Country enum to CountryModel for display
+    val selectedCountryModel = remember(selectedCountry) {
+        when (selectedCountry) {
+            Country.ISRAEL -> CountryModel(
+                id = "IL",
+                displayName = "Israel",
+                flagResourceId = "flag_il", // Not used anymore, but keep for consistency
+                isEnabled = true
+            )
+            Country.UK -> CountryModel(
+                id = "GB", 
+                displayName = "United Kingdom",
+                flagResourceId = "flag_gb", // Not used anymore, but keep for consistency
+                isEnabled = true
+            )
+        }
+    }
+    
+    // Get world countries - prioritize common ones
+    val worldCountries = remember {
+        val priorityCountries = listOf("IL", "GB", "US", "CA", "AU", "DE", "FR", "IT", "ES", "NL")
+        val priority = WorldCountries.allCountries.filter { it.id in priorityCountries }
+        val others = WorldCountries.allCountries.filter { it.id !in priorityCountries }
+        priority + others
+    }
     
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
-            value = selectedCountry.displayName,
+            value = selectedCountryModel.displayName,
             onValueChange = { },
             readOnly = true,
             label = { Text("Country") },
@@ -365,16 +400,21 @@ fun CountryDropdown(
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
             leadingIcon = {
-                val flagResourceId = context.resources.getIdentifier(
-                    selectedCountry.flagResourceId,
-                    "drawable",
-                    context.packageName
-                )
-                if (flagResourceId != 0) {
-                    Image(
-                        painter = painterResource(id = flagResourceId),
-                        contentDescription = "${selectedCountry.displayName} flag",
-                        modifier = Modifier.size(24.dp)
+                // Always show country code badge for consistency
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = selectedCountryModel.id,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp
                     )
                 }
             },
@@ -388,29 +428,41 @@ fun CountryDropdown(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            Country.values().forEach { country ->
+            worldCountries.forEach { countryModel ->
                 DropdownMenuItem(
                     text = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            val flagResourceId = context.resources.getIdentifier(
-                                country.flagResourceId,
-                                "drawable",
-                                context.packageName
-                            )
-                            if (flagResourceId != 0) {
-                                Image(
-                                    painter = painterResource(id = flagResourceId),
-                                    contentDescription = "${country.displayName} flag",
-                                    modifier = Modifier.size(24.dp)
+                            // Always show country code badge for consistency
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.primary,
+                                        CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = countryModel.id,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 8.sp
                                 )
                             }
-                            Text(country.displayName)
+                            
+                            Text(countryModel.displayName)
                         }
                     },
                     onClick = {
+                        // Convert CountryModel back to Country enum for compatibility
+                        val country = when (countryModel.id) {
+                            "IL" -> Country.ISRAEL
+                            "GB" -> Country.UK
+                            else -> Country.ISRAEL // Default fallback
+                        }
                         onCountrySelected(country)
                         expanded = false
                     }
@@ -440,10 +492,7 @@ fun SettingsContentPreview() {
 }
 
 @Composable
-fun LicensePlateTemplateConfigurationCard(
-    templateViewModel: LicensePlateTemplateViewModel = hiltViewModel()
-) {
-    val configurationStatus by templateViewModel.configurationStatus.collectAsState()
+fun LicensePlateTemplateConfigurationCard() {
     var showFullConfiguration by remember { mutableStateOf(false) }
     
     Card(
@@ -465,21 +514,11 @@ fun LicensePlateTemplateConfigurationCard(
                         style = MaterialTheme.typography.titleMedium
                     )
                     
-                    configurationStatus?.let { status ->
-                        Text(
-                            text = if (status.isFullyConfigured) {
-                                "All countries configured (${status.configuredCountries}/${status.totalCountries})"
-                            } else {
-                                "Configuration incomplete (${status.configuredCountries}/${status.totalCountries})"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (status.isFullyConfigured) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            }
-                        )
-                    }
+                    Text(
+                        text = "Configure license plate patterns for your detection needs",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 
                 Icon(
@@ -487,41 +526,6 @@ fun LicensePlateTemplateConfigurationCard(
                     contentDescription = "Configure Templates",
                     tint = MaterialTheme.colorScheme.primary
                 )
-            }
-            
-            Text(
-                text = "Configure license plate validation patterns for each country",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            // Show warning if not fully configured
-            configurationStatus?.let { status ->
-                if (!status.isFullyConfigured) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
-                                shape = RoundedCornerShape(4.dp)
-                            )
-                            .padding(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Warning",
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Needs configuration: ${status.needsConfiguration.joinToString(", ") { it.displayName }}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                }
             }
             
             // Toggle to show/hide full configuration
@@ -534,51 +538,101 @@ fun LicensePlateTemplateConfigurationCard(
         }
     }
     
-    // Show full template configuration when expanded
+    // Show full interactive configuration when expanded
     if (showFullConfiguration) {
         Spacer(modifier = Modifier.height(16.dp))
+        
+        // Use the existing template configuration components without vertical scroll
+        val templateViewModel: LicensePlateTemplateViewModel = hiltViewModel()
         val uiState by templateViewModel.uiState.collectAsState()
         val selectedCountry by templateViewModel.selectedCountry.collectAsState()
         val templates by templateViewModel.templates.collectAsState()
         val validationErrors by templateViewModel.validationErrors.collectAsState()
         val isSaving by templateViewModel.isSaving.collectAsState()
         val canSave by templateViewModel.canSave.collectAsState()
-        
+
         when (val state = uiState) {
             is TemplateUiState.Loading -> {
                 Box(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator()
                 }
             }
             is TemplateUiState.Success -> {
-                LicensePlateTemplateContent(
-                    availableCountries = state.availableCountries,
-                    configurationStatus = state.configurationStatus,
-                    selectedCountry = selectedCountry,
-                    templates = templates,
-                    validationErrors = validationErrors,
-                    isSaving = isSaving,
-                    canSave = canSave,
-                    onCountrySelected = templateViewModel::selectCountry,
-                    onTemplatePatternChanged = templateViewModel::updateTemplatePattern,
-                    onAddTemplate = templateViewModel::addTemplate,
-                    onDeleteTemplate = templateViewModel::deleteTemplate,
-                    onSaveTemplates = templateViewModel::saveTemplates
-                )
+                // Embed the template configuration content without scaffold/scrolling
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Configuration status card
+                    ConfigurationStatusCard(state.configurationStatus)
+                    
+                    // Country selection
+                    CountrySelectionCard(
+                        availableCountries = state.availableCountries,
+                        selectedCountry = selectedCountry,
+                        onCountrySelected = templateViewModel::selectCountry
+                    )
+                    
+                    // Template builder
+                    if (selectedCountry != null) {
+                        TemplateBuilderCard(
+                            templates = templates,
+                            validationErrors = validationErrors,
+                            onTemplatePatternChanged = templateViewModel::updateTemplatePattern,
+                            onAddTemplate = templateViewModel::addTemplate,
+                            onDeleteTemplate = templateViewModel::deleteTemplate,
+                            maxTemplates = 2
+                        )
+                    }
+                    
+                    // Save button
+                    Button(
+                        onClick = templateViewModel::saveTemplates,
+                        enabled = canSave && !isSaving,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isSaving) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Text("Saving...")
+                            }
+                        } else {
+                            Text("Save Templates")
+                        }
+                    }
+                }
             }
             is TemplateUiState.Error -> {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
-                    Text(
-                        text = "Error: ${state.message}",
+                    Column(
                         modifier = Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = "Error",
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = state.message,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }

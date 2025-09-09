@@ -1,7 +1,7 @@
 package com.example.vehiclerecognition.domain.repository
 
 import com.example.vehiclerecognition.data.db.CountryEntity
-import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.data.models.LicensePlateTemplate
 import kotlinx.coroutines.flow.Flow
 
@@ -11,8 +11,8 @@ import kotlinx.coroutines.flow.Flow
 interface LicensePlateTemplateRepository {
     
     // Country operations
-    fun getAllEnabledCountries(): Flow<List<Country>>
-    suspend fun getCountryById(countryId: String): Country?
+    fun getAllEnabledCountries(): Flow<List<CountryModel>>
+    suspend fun getCountryById(countryId: String): CountryModel?
     suspend fun isCountryEnabled(countryId: String): Boolean
     suspend fun initializeDefaultCountries()
     
@@ -29,7 +29,7 @@ interface LicensePlateTemplateRepository {
     suspend fun replaceTemplatesForCountry(countryId: String, templates: List<LicensePlateTemplate>)
     
     // Validation and warnings
-    suspend fun getCountriesWithoutTemplates(): List<Country>
+    suspend fun getCountriesWithoutTemplates(): List<CountryModel>
     suspend fun validateTemplatePattern(pattern: String): TemplateValidationResult
     
     // Template usage

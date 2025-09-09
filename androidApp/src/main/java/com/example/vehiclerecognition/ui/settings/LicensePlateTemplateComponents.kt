@@ -45,8 +45,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.example.vehiclerecognition.data.models.Country
+import com.example.vehiclerecognition.data.models.CountryModel
 import com.example.vehiclerecognition.domain.service.ConfigurationStatus
+import com.example.vehiclerecognition.ui.components.AlphabetListItem
+import com.example.vehiclerecognition.ui.components.StickyAlphabetList
 
 /**
  * Main license plate template configuration screen
@@ -118,14 +120,14 @@ fun LicensePlateTemplateScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LicensePlateTemplateContent(
-    availableCountries: List<Country>,
+    availableCountries: List<CountryModel>,
     configurationStatus: ConfigurationStatus,
-    selectedCountry: Country?,
+    selectedCountry: CountryModel?,
     templates: List<EditableTemplate>,
     validationErrors: Map<Int, String>,
     isSaving: Boolean,
     canSave: Boolean,
-    onCountrySelected: (Country) -> Unit,
+    onCountrySelected: (CountryModel) -> Unit,
     onTemplatePatternChanged: (Int, String) -> Unit,
     onAddTemplate: () -> Unit,
     onDeleteTemplate: (Int) -> Unit,
@@ -260,9 +262,9 @@ fun ConfigurationStatusCard(configurationStatus: ConfigurationStatus) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CountrySelectionCard(
-    availableCountries: List<Country>,
-    selectedCountry: Country?,
-    onCountrySelected: (Country) -> Unit
+    availableCountries: List<CountryModel>,
+    selectedCountry: CountryModel?,
+    onCountrySelected: (CountryModel) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -286,17 +288,53 @@ fun CountrySelectionCard(
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            // Country selection buttons
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(availableCountries) { country ->
-                    CountrySelectionButton(
-                        country = country,
-                        isSelected = selectedCountry == country,
-                        onClick = { onCountrySelected(country) }
-                    )
+            // Simple country selection - no scrolling components
+            Text(
+                text = "Popular Countries:",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            
+            // Show first few popular countries without any scrolling
+            val popularCountries = remember(availableCountries) {
+                availableCountries.filter { country ->
+                    // Show some common countries that users are likely to need
+                    listOf("US", "GB", "CA", "AU", "DE", "FR", "IT", "ES", "NL", "SE").contains(country.id)
                 }
+            }
+            
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                popularCountries.chunked(2).forEach { countryPair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        countryPair.forEach { country ->
+                            CountrySelectionButton(
+                                country = country,
+                                isSelected = selectedCountry == country,
+                                onClick = { onCountrySelected(country) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        // Fill empty space if odd number
+                        if (countryPair.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Don't see your country? Select any similar country to start, then customize the license plate patterns for your region.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -304,14 +342,15 @@ fun CountrySelectionCard(
 
 @Composable
 fun CountrySelectionButton(
-    country: Country,
+    country: CountryModel,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     
     Card(
-        modifier = Modifier
+        modifier = modifier
             .clickable { onClick() }
             .border(
                 width = if (isSelected) 2.dp else 0.dp,
