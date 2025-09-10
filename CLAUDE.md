@@ -83,3 +83,4 @@ com.example.vehiclerecognition/
 
 The project follows clean architecture principles with clear separation between UI, domain, and data layers. Most business logic resides in the shared module for potential multi-platform expansion.
 - ./run.sh apk is the best way to build and make me an apk file
+- Don't run "./run.sh run". Only run "./run.sh apk"

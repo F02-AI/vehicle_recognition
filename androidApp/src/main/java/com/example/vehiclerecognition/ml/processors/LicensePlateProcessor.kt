@@ -158,8 +158,16 @@ class LicensePlateProcessor @Inject constructor(
                                     
                                     val enhancementResult = if (rawText?.isNotBlank() == true) {
                                         val result = templateAwareEnhancer.enhanceOcrResult(rawText, settings.selectedCountry, settings.debugLogger)
-                                        Log.d("LicensePlateProcessor", "Enhancement result: formatted='${result.formattedPlate}', isValid=${result.isValidFormat}, message='${result.message}'")
-                                        settings.debugLogger?.invoke("Enhancement: '${result.formattedPlate}' valid=${result.isValidFormat} msg='${result.message}'")
+                                        Log.d("LicensePlateProcessor", "=== TEMPLATE ENHANCEMENT DEBUG ===")
+                                        Log.d("LicensePlateProcessor", "Raw OCR: '$rawText'")
+                                        Log.d("LicensePlateProcessor", "Enhancement result: formatted='${result.formattedPlate}', isValid=${result.isValidFormat}")
+                                        Log.d("LicensePlateProcessor", "Possible matches: ${result.possibleMatches}")
+                                        Log.d("LicensePlateProcessor", "Message: '${result.message}'")
+                                        settings.debugLogger?.invoke("=== TEMPLATE ENHANCEMENT DEBUG ===")
+                                        settings.debugLogger?.invoke("Raw OCR: '$rawText'")
+                                        settings.debugLogger?.invoke("Enhancement: formatted='${result.formattedPlate}' valid=${result.isValidFormat}")
+                                        settings.debugLogger?.invoke("Possible matches: ${result.possibleMatches}")
+                                        settings.debugLogger?.invoke("Message: '${result.message}'")
                                         result
                                     } else {
                                         Log.d("LicensePlateProcessor", "No raw text to enhance")
@@ -168,7 +176,24 @@ class LicensePlateProcessor @Inject constructor(
                                     }
                                     
                                     // Use enhanced result if available and valid
-                                    val finalText = enhancementResult?.formattedPlate ?: rawText
+                                    // FIXED: Use the formattedPlate directly since it's already the best match
+                                    val finalText = if (enhancementResult != null && enhancementResult.isValidFormat) {
+                                        Log.d("LicensePlateProcessor", "=== TEMPLATE SELECTION DEBUG (FIXED) ===")
+                                        Log.d("LicensePlateProcessor", "Using formattedPlate directly: '${enhancementResult.formattedPlate}'")
+                                        Log.d("LicensePlateProcessor", "Original possible matches (for reference): ${enhancementResult.possibleMatches}")
+                                        
+                                        settings.debugLogger?.invoke("=== TEMPLATE SELECTION DEBUG (FIXED) ===")
+                                        settings.debugLogger?.invoke("Using formattedPlate directly: '${enhancementResult.formattedPlate}'")
+                                        settings.debugLogger?.invoke("Original possible matches (for reference): ${enhancementResult.possibleMatches}")
+                                        
+                                        // Use the formattedPlate directly - it's already the best match chosen by TemplateAwareOcrEnhancer
+                                        enhancementResult.formattedPlate
+                                    } else {
+                                        Log.d("LicensePlateProcessor", "No valid enhancement result, using raw text: '$rawText'")
+                                        settings.debugLogger?.invoke("No valid enhancement result, using raw text: '$rawText'")
+                                        // Fallback to raw text if no enhancement
+                                        rawText
+                                    }
                                     val finalIsValid = enhancementResult?.isValidFormat ?: ocrResult.isValidFormat
                                     Log.d("LicensePlateProcessor", "Final result: text='$finalText', isValid=$finalIsValid")
                                     settings.debugLogger?.invoke("Final result: '$finalText' valid=$finalIsValid")

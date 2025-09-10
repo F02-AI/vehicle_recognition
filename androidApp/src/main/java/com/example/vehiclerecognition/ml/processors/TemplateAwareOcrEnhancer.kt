@@ -88,29 +88,48 @@ class TemplateAwareOcrEnhancer @Inject constructor(
         val matches = mutableListOf<TemplateMatch>()
         
         for (template in templates.sortedBy { it.priority }) {
-            android.util.Log.d("TemplateAwareOcrEnhancer", "Trying template: ${template.displayName} (${template.templatePattern})")
+            android.util.Log.d("TemplateAwareOcrEnhancer", "=== TRYING TEMPLATE: ${template.displayName} (${template.templatePattern}) ===")
             for (possibleText in allPossibleTexts) {
+                android.util.Log.d("TemplateAwareOcrEnhancer", "Trying text: '$possibleText' against template: ${template.templatePattern}")
                 val match = attemptTemplateMatch(possibleText, template)
                 if (match != null) {
-                    android.util.Log.d("TemplateAwareOcrEnhancer", "Match found: '$possibleText' -> '${match.formattedText}' (confidence: ${match.confidence})")
+                    android.util.Log.d("TemplateAwareOcrEnhancer", "✓ Match found: '$possibleText' -> '${match.formattedText}' (confidence: ${match.confidence}) [${template.displayName}]")
                     matches.add(match)
+                } else {
+                    android.util.Log.d("TemplateAwareOcrEnhancer", "✗ No match for: '$possibleText' against ${template.templatePattern}")
                 }
             }
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Template ${template.displayName} found ${matches.count { it.template == template }} matches")
         }
         
-        // Return the best match (highest confidence, then by template priority)
+        // Return the best match (prioritize longer matches, then confidence, then template priority)
         val bestMatch = matches.maxWithOrNull(
-            compareBy<TemplateMatch> { it.confidence }.thenBy { -it.template.priority }
+            compareBy<TemplateMatch> { it.formattedText.length }.thenBy { it.confidence }.thenBy { -it.template.priority }
         )
         
-        android.util.Log.d("TemplateAwareOcrEnhancer", "Best match: ${bestMatch?.let { "${it.formattedText} (confidence: ${it.confidence})" } ?: "none"}")
+        android.util.Log.d("TemplateAwareOcrEnhancer", "=== ALL TEMPLATE MATCHES ===")
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Found ${matches.size} total matches:")
+        matches.forEach { match ->
+            android.util.Log.d("TemplateAwareOcrEnhancer", "  ${match.template.displayName} (${match.template.templatePattern}): '${match.formattedText}' (len=${match.formattedText.length}, conf=${match.confidence})")
+        }
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Best match: ${bestMatch?.let { "${it.formattedText} (confidence: ${it.confidence}, template: ${it.template.displayName})" } ?: "none"}")
         
         return if (bestMatch != null && bestMatch.confidence > 0.7f) {
             android.util.Log.d("TemplateAwareOcrEnhancer", "Using best match: ${bestMatch.formattedText}")
+            
+            val possibleMatchesList = matches.take(3).map { "${it.formattedText} (${it.confidence})" }
+            android.util.Log.d("TemplateAwareOcrEnhancer", "=== CREATING OCR ENHANCEMENT RESULT ===")
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Best match: ${bestMatch.formattedText} from template ${bestMatch.template.displayName}")
+            android.util.Log.d("TemplateAwareOcrEnhancer", "All matches used for possibleMatches:")
+            matches.take(3).forEach { match ->
+                android.util.Log.d("TemplateAwareOcrEnhancer", "  - ${match.formattedText} (${match.confidence}) from ${match.template.displayName}")
+            }
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Final possibleMatches list: $possibleMatchesList")
+            
             OcrEnhancementResult(
                 formattedPlate = bestMatch.formattedText,
                 isValidFormat = true,
-                possibleMatches = matches.take(3).map { "${it.formattedText} (${it.confidence})" },
+                possibleMatches = possibleMatchesList,
                 message = "Matched template: ${bestMatch.template.displayName}"
             )
         } else {
@@ -202,20 +221,29 @@ class TemplateAwareOcrEnhancer @Inject constructor(
     private fun attemptTemplateMatch(text: String, template: LicensePlateTemplate): TemplateMatch? {
         val pattern = template.templatePattern
         
+        android.util.Log.d("TemplateAwareOcrEnhancer", "=== TEMPLATE MATCH ATTEMPT ===")
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Attempting match: text='$text' (${text.length}) vs pattern='$pattern' (${pattern.length}) template='${template.displayName}'")
+        
         if (text.length != pattern.length) {
             // Try substring matching for longer text
             if (text.length > pattern.length) {
+                android.util.Log.d("TemplateAwareOcrEnhancer", "Text longer than pattern, trying substring matching")
                 return findBestSubstringMatch(text, template)
             }
+            android.util.Log.d("TemplateAwareOcrEnhancer", "Text length mismatch, skipping (text: ${text.length}, pattern: ${pattern.length})")
             return null
         }
         
         var confidence = 0f
         val formattedChars = mutableListOf<Char>()
         
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Character-by-character matching: text='$text' vs pattern='$pattern'")
+        
         for (i in pattern.indices) {
             val expectedType = pattern[i]
             val actualChar = text[i]
+            
+            android.util.Log.d("TemplateAwareOcrEnhancer", "  Position $i: expecting '$expectedType', got '$actualChar'")
             
             when (expectedType) {
                 'L' -> {
@@ -262,14 +290,19 @@ class TemplateAwareOcrEnhancer @Inject constructor(
         }
         
         val normalizedConfidence = confidence / pattern.length
+        val formattedResult = String(formattedChars.toCharArray())
+        
+        android.util.Log.d("TemplateAwareOcrEnhancer", "Match result: confidence=$confidence/$pattern.length=$normalizedConfidence, formatted='$formattedResult'")
         
         return if (normalizedConfidence > 0.5f) {
+            android.util.Log.d("TemplateAwareOcrEnhancer", "✓ Match accepted (confidence > 0.5)")
             TemplateMatch(
                 template = template,
-                formattedText = String(formattedChars.toCharArray()),
+                formattedText = formattedResult,
                 confidence = normalizedConfidence
             )
         } else {
+            android.util.Log.d("TemplateAwareOcrEnhancer", "✗ Match rejected (confidence $normalizedConfidence <= 0.5)")
             null
         }
     }
