@@ -82,3 +82,4 @@ com.example.vehiclerecognition/
 **Testing**: Shared module contains domain logic tests. Android-specific UI testing requires connected device setup.
 
 The project follows clean architecture principles with clear separation between UI, domain, and data layers. Most business logic resides in the shared module for potential multi-platform expansion.
+- ./run.sh apk is the best way to build and make me an apk file

@@ -396,7 +396,9 @@ class CameraViewModel @Inject constructor(
         // Monitor license plate detections for watchlist matching
         viewModelScope.launch {
             latestRecognizedText.collectLatest { recognizedText ->
+                addDebugLog("latestRecognizedText.collectLatest triggered: recognizedText='$recognizedText'")
                 recognizedText?.let { plateText ->
+                    addDebugLog("About to call processDetection from OCR result: plateText='$plateText'")
                     // Process the recognized license plate for watchlist matching
                     processDetection(plateText, null, null)
                 }
@@ -493,7 +495,10 @@ class CameraViewModel @Inject constructor(
                 val lpResultDeferred = if (needsLicensePlateDetection) {
                     async {
                         Log.d("CameraViewModel", "Starting parallel license plate detection")
-                        val settingsWithDebugger = currentSettings.copy(debugLogger = ::addDebugLog)
+                        val settingsWithDebugger = currentSettings.copy(debugLogger = { log ->
+                            addDebugLog(log)
+                            // Also capture VehicleMatcher logs if they contain relevant info
+                        })
                         licensePlateRepository.processFrame(bitmap, settingsWithDebugger)
                     }
                 } else {
@@ -729,9 +734,12 @@ class CameraViewModel @Inject constructor(
                 val matchedPlates = mutableSetOf<String>()
                 val matchedVehicles = mutableSetOf<String>()
                 
+                addDebugLog("Detection mode: $detectionMode, plates: ${currentPlates.size}, vehicles: ${currentVehicles.size}")
+                
                 val hasMatch = when (detectionMode) {
                     DetectionMode.LP_ONLY -> {
                         Log.d("CameraViewModel", "Matching mode: LICENSE_PLATE_ONLY - checking plates only")
+                        addDebugLog("Running LP_ONLY detection with ${currentPlates.size} plates")
                         checkLicensePlateOnlyMatches(currentPlates, matchedPlates)
                     }
                     DetectionMode.COLOR_ONLY -> {
@@ -880,15 +888,26 @@ class CameraViewModel @Inject constructor(
         val currentCountry = _currentSettings.value.selectedCountry
         var hasAnyMatch = false
         
+        addDebugLog("Checking ${plates.size} plates against watchlist")
+        
         for (plate in plates) {
             plate.recognizedText?.let { plateText ->
+                addDebugLog("Checking plate: '$plateText' for LP_ONLY mode")
                 val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate = plateText)
-                if (vehicleMatcher.findMatch(
+                addDebugLog("Calling vehicleMatcher.findMatch for plate: '$plateText'")
+                
+                // Get watchlist info for debugging
+                val watchlistEntries = watchlistRepository.getEntriesByCountry(currentCountry).first()
+                addDebugLog("Germany watchlist has ${watchlistEntries.size} entries: ${watchlistEntries.map { it.licensePlate }}")
+                
+                val matchResult = vehicleMatcher.findMatch(
                         detectedVehicle,
                         DetectionMode.LP_ONLY,
                         currentCountry,
                         _currentSettings.value.enablePlateCandidateGeneration
-                    )) {
+                    )
+                addDebugLog("vehicleMatcher.findMatch returned: $matchResult for plate: '$plateText'")
+                if (matchResult) {
                     Log.d("CameraViewModel", "LP-only match found: $plateText")
                     matchedPlates.add(plateText)
                     hasAnyMatch = true
@@ -1251,6 +1270,7 @@ class CameraViewModel @Inject constructor(
      * Updates the match status based on the current detection mode.
      */
     fun processDetection(licensePlate: String?, color: VehicleColor?, type: VehicleType?) {
+        addDebugLog("processDetection() CALLED: LP='$licensePlate', color=$color, type=$type")
         val detectedVehicle = VehicleMatcher.DetectedVehicle(licensePlate, color, type)
         _lastDetectedVehicle.value = detectedVehicle
         Log.d("CameraViewModel", "Processing detection - LP: $licensePlate, Color: $color, Type: $type")
@@ -1258,12 +1278,18 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             val currentDetectionMode = settingsRepository.detectionMode.value
             val currentCountry = _currentSettings.value.selectedCountry
-                val isMatch = vehicleMatcher.findMatch(
-                    detectedVehicle,
-                    currentDetectionMode,
-                    currentCountry,
-                    _currentSettings.value.enablePlateCandidateGeneration
-                )
+            
+            addDebugLog("ProcessDetection: mode=$currentDetectionMode, LP='$licensePlate', color=$color, type=$type, country=${currentCountry.displayName}")
+            addDebugLog("About to call vehicleMatcher.findMatch()")
+            
+            val isMatch = vehicleMatcher.findMatch(
+                detectedVehicle,
+                currentDetectionMode,
+                currentCountry,
+                _currentSettings.value.enablePlateCandidateGeneration
+            )
+            
+            addDebugLog("VehicleMatcher result: $isMatch")
             
             if (isMatch) {
                 Log.d("CameraViewModel", "MATCH FOUND based on mode $currentDetectionMode!")

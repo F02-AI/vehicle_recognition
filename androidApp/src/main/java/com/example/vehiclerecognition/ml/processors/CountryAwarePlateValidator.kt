@@ -17,7 +17,11 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> NumericPlateValidator.validateAndFormatPlate(rawText)
             Country.UK -> UKPlateValidator.validateAndFormatPlate(rawText)
-            else -> NumericPlateValidator.validateAndFormatPlate(rawText) // Default to Israeli format
+            else -> {
+                // For other countries with templates, just clean and return if valid length
+                val cleanText = rawText.replace(Regex("[^A-Z0-9]"), "").uppercase()
+                if (cleanText.length in 4..15) cleanText else null
+            }
         }
     }
     
@@ -28,7 +32,12 @@ object CountryAwarePlateValidator {
         return when (country) {
             Country.ISRAEL -> NumericPlateValidator.isValidIsraeliFormat(plateText)
             Country.UK -> UKPlateValidator.isValidUkFormat(plateText)
-            else -> NumericPlateValidator.isValidIsraeliFormat(plateText) // Default to Israeli format
+            else -> {
+                // For other countries, accept any alphanumeric string with reasonable length
+                // This allows template-based validation to work properly
+                val cleanText = plateText.replace(Regex("[^A-Z0-9]"), "").uppercase()
+                cleanText.length in 4..15 // Reasonable range for license plates
+            }
         }
     }
     
