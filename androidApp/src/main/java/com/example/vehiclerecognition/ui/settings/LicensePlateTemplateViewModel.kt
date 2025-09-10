@@ -10,6 +10,9 @@ import com.example.vehiclerecognition.domain.service.ConfigurationStatus
 import com.example.vehiclerecognition.domain.service.LicensePlateTemplateService
 import com.example.vehiclerecognition.domain.service.TemplateOperationResult
 import com.example.vehiclerecognition.domain.validation.TemplateValidationRules
+import com.example.vehiclerecognition.domain.repository.WatchlistRepository
+import com.example.vehiclerecognition.data.repositories.LicensePlateRepository
+import com.example.vehiclerecognition.model.WatchlistEntry
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +29,9 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class LicensePlateTemplateViewModel @Inject constructor(
-    private val templateService: LicensePlateTemplateService
+    private val templateService: LicensePlateTemplateService,
+    private val watchlistRepository: WatchlistRepository,
+    private val licensePlateRepository: LicensePlateRepository
 ) : ViewModel() {
     
     companion object {
@@ -53,6 +58,10 @@ class LicensePlateTemplateViewModel @Inject constructor(
     
     private val _isSaved = MutableStateFlow(false)
     val isSaved: StateFlow<Boolean> = _isSaved.asStateFlow()
+    
+    // State for template deletion error dialog
+    private val _deletionError = MutableStateFlow<TemplateDeletionError?>(null)
+    val deletionError: StateFlow<TemplateDeletionError?> = _deletionError.asStateFlow()
     
     // Combined state for UI to determine if save button should be enabled
     val canSave: StateFlow<Boolean> = combine(
@@ -180,8 +189,30 @@ class LicensePlateTemplateViewModel @Inject constructor(
     fun deleteTemplate(index: Int) {
         val currentTemplates = _templates.value.toMutableList()
         if (index >= 0 && index < currentTemplates.size) {
-            if (currentTemplates.size > 1) {
-                // Multiple templates: remove the template
+            val templateToDelete = currentTemplates[index]
+            
+            // Check if watchlist entries are using this template
+            viewModelScope.launch {
+                val affectedEntries = checkWatchlistEntriesUsingTemplate(templateToDelete.pattern)
+                
+                if (affectedEntries.isNotEmpty()) {
+                    // Show error dialog with affected license plates
+                    _deletionError.value = TemplateDeletionError(
+                        templatePattern = templateToDelete.pattern,
+                        affectedLicensePlates = affectedEntries.mapNotNull { it.licensePlate }
+                    )
+                    return@launch
+                }
+                
+                // No affected entries, proceed with deletion
+                proceedWithTemplateDeletion(index, currentTemplates)
+            }
+        }
+    }
+    
+    private fun proceedWithTemplateDeletion(index: Int, currentTemplates: MutableList<EditableTemplate>) {
+        if (currentTemplates.size > 1) {
+            // Multiple templates: remove the template
             currentTemplates.removeAt(index)
             // Update priorities
             currentTemplates.forEachIndexed { i, template ->
@@ -205,26 +236,72 @@ class LicensePlateTemplateViewModel @Inject constructor(
                 }
             }
             _validationErrors.value = adjustedErrors
-            } else {
-                // Single template: reset it to empty
-                currentTemplates[index] = EditableTemplate(
-                    id = 0,
-                    pattern = "",
-                    displayName = "Template 1",
-                    priority = 1,
-                    isValid = false,
-                    validationMessage = null
-                )
-                _templates.value = currentTemplates
-                
-                // Clear validation errors for this template
-                val currentErrors = _validationErrors.value.toMutableMap()
-                currentErrors.remove(index)
-                _validationErrors.value = currentErrors
-            }
+        } else {
+            // Single template: reset it to empty
+            currentTemplates[index] = EditableTemplate(
+                id = 0,
+                pattern = "",
+                displayName = "Template 1",
+                priority = 1,
+                isValid = false,
+                validationMessage = null
+            )
+            _templates.value = currentTemplates
             
-            validateAllTemplates()
+            // Clear validation errors for this template
+            val currentErrors = _validationErrors.value.toMutableMap()
+            currentErrors.remove(index)
+            _validationErrors.value = currentErrors
         }
+        
+        validateAllTemplates()
+    }
+    
+    /**
+     * Checks if any watchlist entries are using the specified template pattern
+     */
+    private suspend fun checkWatchlistEntriesUsingTemplate(templatePattern: String): List<WatchlistEntry> {
+        return try {
+            val currentCountry = licensePlateRepository.settings.first().selectedCountry
+            val allEntries = watchlistRepository.getEntriesByCountry(currentCountry).first()
+            
+            // Filter entries that have license plates matching the template pattern
+            allEntries.filter { entry ->
+                entry.licensePlate?.let { licensePlate ->
+                    doesLicensePlateMatchTemplate(licensePlate, templatePattern)
+                } ?: false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking watchlist entries for template: $templatePattern", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Checks if a license plate matches the template pattern
+     */
+    private fun doesLicensePlateMatchTemplate(licensePlate: String, templatePattern: String): Boolean {
+        if (licensePlate.length != templatePattern.length) {
+            return false
+        }
+        
+        return licensePlate.indices.all { i ->
+            val plateChar = licensePlate[i]
+            val templateChar = templatePattern[i]
+            
+            when (templateChar) {
+                'L' -> plateChar.isLetter()
+                'N' -> plateChar.isDigit()
+                else -> false
+            }
+        }
+    }
+    
+    /**
+     * Dismisses the template deletion error dialog
+     */
+    fun dismissDeletionError() {
+        _deletionError.value = null
     }
 
     private fun validateTemplate(index: Int, pattern: String) {
@@ -371,4 +448,12 @@ data class EditableTemplate(
     val priority: Int,
     val isValid: Boolean,
     val validationMessage: String?
+)
+
+/**
+ * Error information for when template deletion is blocked due to watchlist entries
+ */
+data class TemplateDeletionError(
+    val templatePattern: String,
+    val affectedLicensePlates: List<String>
 )

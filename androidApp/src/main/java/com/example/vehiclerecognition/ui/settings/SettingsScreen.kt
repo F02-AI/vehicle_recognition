@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -567,6 +568,7 @@ fun LicensePlateTemplateConfigurationCard(
         val isSaving by templateViewModel.isSaving.collectAsState()
         val isSaved by templateViewModel.isSaved.collectAsState()
         val canSave by templateViewModel.canSave.collectAsState()
+        val deletionError by templateViewModel.deletionError.collectAsState()
         
         // Sync the main settings country with the template ViewModel
         LaunchedEffect(selectedCountry) {
@@ -716,5 +718,93 @@ fun LicensePlateTemplateConfigurationCard(
                 }
             }
         }
+        
+        // Show template deletion error dialog
+        deletionError?.let { error ->
+            TemplateDeletionErrorDialog(
+                templatePattern = error.templatePattern,
+                affectedLicensePlates = error.affectedLicensePlates,
+                onDismiss = { templateViewModel.dismissDeletionError() }
+            )
+        }
     }
+}
+
+@Composable
+fun TemplateDeletionErrorDialog(
+    templatePattern: String,
+    affectedLicensePlates: List<String>,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Text("Cannot Delete Template")
+            }
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Cannot delete template '$templatePattern' because it is currently being used by watchlist entries.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                
+                Text(
+                    text = "Please delete the following license plates from the watchlist first:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        affectedLicensePlates.forEach { licensePlate ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Error,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = licensePlate,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Understood")
+            }
+        }
+    )
 } 
