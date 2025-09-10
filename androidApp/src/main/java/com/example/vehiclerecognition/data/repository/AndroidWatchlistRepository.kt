@@ -22,6 +22,18 @@ class AndroidWatchlistRepository(
     override suspend fun addEntry(entry: WatchlistEntry): Boolean {
         // Note: License plate validation is now handled in the ViewModel using template-based validation
         try {
+            // Check for duplicate license plate within the same country
+            if (entry.licensePlate != null) {
+                val existingEntry = watchlistDao.findEntryByLicensePlateAndCountry(
+                    entry.licensePlate, 
+                    entry.country.isoCode
+                )
+                if (existingEntry != null) {
+                    println("AndroidWatchlistRepository: Duplicate license plate '${entry.licensePlate}' already exists for country ${entry.country.displayName}")
+                    return false
+                }
+            }
+            
             val entityToInsert = entry.toEntity()
             watchlistDao.insertEntry(entityToInsert)
             println("AndroidWatchlistRepository: Added entry with license plate ${entry.licensePlate ?: "none"}")

@@ -107,6 +107,11 @@ fun AppNavHost(
                     )
                 }
             }
+            // Refresh template information when navigating to watchlist
+            // This ensures the FAB shows up immediately after adding templates in settings
+            LaunchedEffect(navController.currentBackStackEntry) {
+                watchlistViewModel.refreshTemplateInformation()
+            }
             WatchlistScreen(viewModel = watchlistViewModel)
         }
         composable(Screen.Settings.route) {

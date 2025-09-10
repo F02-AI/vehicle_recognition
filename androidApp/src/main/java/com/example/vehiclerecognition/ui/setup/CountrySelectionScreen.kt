@@ -107,55 +107,16 @@ fun CountrySelectionScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 CountryFlag(country = country, size = 24.dp)
-                                Column {
-                                    Text(
-                                        text = country.displayName,
-                                        style = MaterialTheme.typography.bodyLarge
-                                    )
-                                    Text(
-                                        text = "${country.isoCode} license plates",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                Text(
+                                    text = country.displayName,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
                             }
                         },
                         onClick = {
                             selectedCountry = country
                             expanded = false
                         }
-                    )
-                }
-            }
-        }
-        
-        if (selectedCountry != null) {
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
-                        text = "License Plate Format",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = when (selectedCountry) {
-                            Country.ISRAEL -> "Israeli format: NN-NNN-NN, NNN-NN-NNN, N-NNNN-NN\nExample: 12-345-67"
-                            Country.UK -> "UK format: LLNN-LLL\nExample: AB12-XYZ"
-                            else -> "License plate format for ${selectedCountry?.displayName}"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -38,6 +39,7 @@ fun WatchlistScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val showDialog by viewModel.showAddDialog.collectAsState()
+    val hasConfiguredTemplates by viewModel.hasConfiguredTemplates.collectAsState()
     var entryToDelete by remember { mutableStateOf<WatchlistEntry?>(null) }
 
     Scaffold(
@@ -45,8 +47,11 @@ fun WatchlistScreen(
             TopAppBar(title = { Text("Watchlist") })
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { viewModel.openAddDialog() }) {
-                Icon(Icons.Filled.Add, "Add to watchlist")
+            // Only show FAB if templates are configured
+            if (hasConfiguredTemplates) {
+                FloatingActionButton(onClick = { viewModel.openAddDialog() }) {
+                    Icon(Icons.Filled.Add, "Add to watchlist")
+                }
             }
         }
     ) { paddingValues ->
@@ -60,7 +65,28 @@ fun WatchlistScreen(
                 is WatchlistUiState.Success -> {
                     if (state.entries.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                            Text("Watchlist is empty. Tap '+' to add an entry.")
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                if (hasConfiguredTemplates) {
+                                    Text("Watchlist is empty. Tap '+' to add an entry.")
+                                } else {
+                                    Text(
+                                        text = "No license plate templates configured.",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = "Please add at least one license plate template for the selected country in Settings.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 32.dp),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
                         }
                     } else {
                         WatchlistContent(entries = state.entries) { entry ->
